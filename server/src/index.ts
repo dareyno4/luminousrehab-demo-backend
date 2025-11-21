@@ -5,7 +5,31 @@ const { requireAuth } = require("./middleware/auth");
 const { supabaseAdmin, supabaseUserScoped } = require("./lib/supabase");
 
 const app = express();
-app.use(cors());
+
+// CORS configuration - Update with your actual GitHub Pages URL
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'https://dareyno4.github.io', // Update with your GitHub username
+    'https://dareyno4.github.io/luminousrehab-demo',
+    // Add your production frontend URL here when deployed
+];
+
+app.use(cors({
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+        // Allow requests with no origin (mobile apps, Postman, etc)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            console.warn('Blocked by CORS:', origin);
+            callback(null, false);
+        }
+    },
+    credentials: true,
+}));
+
 app.use(express.json());
 
 app.get("/api/health", (_req: any, res: any) => res.json({ok: true}));
@@ -70,6 +94,21 @@ app.post("/api/activate-user", async (req: any, res: any) => {
 
         if (authError) {
             console.error('Auth error:', authError);
+            
+            // Handle rate limiting
+            if ((authError as any).status === 429) {
+                return res.status(429).json({ 
+                    error: 'Rate limit exceeded. Please wait a few minutes before trying again.' 
+                });
+            }
+            
+            // Handle email_exists specifically
+            if ((authError as any).status === 422 || (authError as any).code === 'email_exists') {
+                return res.status(409).json({ 
+                    error: `An account with email ${invitation.email} already exists. Please contact your administrator.` 
+                });
+            }
+            
             return res.status(500).json({ error: `Failed to create account: ${authError.message}` });
         }
 
@@ -187,6 +226,21 @@ app.post("/api/activate-tenant", async (req: any, res: any) => {
 
         if (authError) {
             console.error('Auth creation error:', authError);
+            
+            // Handle rate limiting
+            if ((authError as any).status === 429) {
+                return res.status(429).json({ 
+                    error: 'Rate limit exceeded. Please wait a few minutes before trying again.' 
+                });
+            }
+            
+            // Handle email_exists specifically
+            if ((authError as any).status === 422 || (authError as any).code === 'email_exists') {
+                return res.status(409).json({ 
+                    error: `An account with email ${email} already exists. Please use a different email or contact support to recover your account.` 
+                });
+            }
+            
             return res.status(500).json({ error: `Failed to create auth user: ${authError.message}` });
         }
 

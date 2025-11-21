@@ -27,6 +27,12 @@ export const authService = {
 
       if (authError) {
         console.error('Auth error:', JSON.stringify(authError, null, 2));
+        
+        // Handle rate limiting
+        if ((authError as any).status === 429 || authError.message?.toLowerCase().includes('rate limit')) {
+          throw new Error('Too many login attempts. Please wait a few minutes and try again.');
+        }
+        
         throw new Error(authError.message);
       }
 

@@ -115,6 +115,10 @@ export default function TenantActivationScreen({ navigation, params }: Props) {
       const result = await response.json();
 
       if (!response.ok) {
+        // Handle rate limiting specifically
+        if (response.status === 429) {
+          throw new Error('Too many activation attempts. Please wait 5-10 minutes and try again.');
+        }
         throw new Error(result.error || 'Failed to activate tenant');
       }
 
