@@ -1,0 +1,23 @@
+# Do not commit .env files
+.env
+.env.*
+
+# Logs
+*.log
+logs/
+server.log
+nohup.out
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
