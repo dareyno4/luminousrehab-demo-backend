@@ -63,6 +63,7 @@ export default function MedicationVerification({ navigation, route }: Props) {
   });
 
   const [scannedDate, setScannedDate] = useState<string>('');
+  const [scannedImage, setScannedImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -77,7 +78,7 @@ export default function MedicationVerification({ navigation, route }: Props) {
         setLoading(true);
         const { data, error } = await supabaseClient
           .from('medications')
-          .select('drug_name, strength, route, frequency, prescriber, scanned_on, ocr_confidence, verified')
+          .select('drug_name, strength, route, frequency, prescriber, scanned_on, ocr_confidence, verified, scanned_image')
           .eq('id', medicationId)
           .single();
 
@@ -118,6 +119,7 @@ export default function MedicationVerification({ navigation, route }: Props) {
             ? new Date(data.scanned_on).toLocaleString()
             : ''
         );
+        setScannedImage(data.scanned_image || null);
         setLoadError(null);
       } catch (err: any) {
         console.error('Error loading medication', err);
@@ -187,6 +189,7 @@ export default function MedicationVerification({ navigation, route }: Props) {
       ocr_confidence: 0.9,
       verified: true,
       changed_after_verify: false,
+      scanned_image: scannedImage || null, // Preserve the scanned image
     };
 
     let finalMedicationId = medicationId;
@@ -339,12 +342,22 @@ export default function MedicationVerification({ navigation, route }: Props) {
                 {scannedDate}
               </Badge>
             </div>
-            <div className="aspect-video bg-[#f8fafc] rounded-xl border-2 border-dashed border-[#e2e8f0] flex items-center justify-center">
-              <div className="text-center">
-                <Camera className="w-12 h-12 text-[#cbd5e1] mx-auto mb-2" />
-                <p className="text-sm text-[#64748b]">Scanned medication bottle image</p>
+            {scannedImage ? (
+              <div className="rounded-xl border-2 border-[#e2e8f0] overflow-hidden bg-[#f8fafc]">
+                <img
+                  src={scannedImage}
+                  alt="Scanned medication"
+                  className="w-full h-auto"
+                />
               </div>
-            </div>
+            ) : (
+              <div className="aspect-video bg-[#f8fafc] rounded-xl border-2 border-dashed border-[#e2e8f0] flex items-center justify-center">
+                <div className="text-center">
+                  <Camera className="w-12 h-12 text-[#cbd5e1] mx-auto mb-2" />
+                  <p className="text-sm text-[#64748b]">No scanned image available</p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Medication Fields */}

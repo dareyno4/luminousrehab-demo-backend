@@ -31,6 +31,7 @@ export interface MedicationInfo {
   refills: string;
   instructions: string;
   confidence: number;
+  image?: string; // base64 data URL of scanned image
 }
 
 /**

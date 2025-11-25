@@ -90,7 +90,12 @@ export default function MedicationOCRScanner({ onMedicationsScanned, onCancel, m
 
   const handleUseMedications = () => {
     if (medications.length > 0) {
-      onMedicationsScanned(medications);
+      // Include the scanned image with each medication
+      const medsWithImage = medications.map(med => ({
+        ...med,
+        image: preview || undefined,
+      }));
+      onMedicationsScanned(medsWithImage);
     }
   };
 

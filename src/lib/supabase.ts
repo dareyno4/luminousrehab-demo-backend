@@ -7,8 +7,5 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
-// Added test log to verify environment variables
-console.log('Supabase URL:', import.meta.env.VITE_SUPABASE_URL);
-console.log('Supabase Anon Key:', import.meta.env.VITE_SUPABASE_ANON_KEY);
-
+// v2 - Cache bust for GitHub Pages deployment
 export const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);

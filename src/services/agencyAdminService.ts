@@ -174,15 +174,42 @@ export async function getChartReviewNotes(chartId: string) {
 
 // Approve a chart (finalize it)
 export async function approveChart(chartId: string, reviewerId: string) {
+  // First, validate the chart can be approved
+  const { data: chart, error: fetchError } = await supabaseClient
+    .from('charts')
+    .select('*, medications:medications(count)')
+    .eq('id', chartId)
+    .single();
+
+  if (fetchError) throw fetchError;
+  
+  // Validate chart state
+  if (!chart) {
+    throw new Error('Chart not found');
+  }
+  
+  // Check if chart already has finalized_at and finalized_by
+  // If not, this might be a chart that was never properly finalized by clinician
+  if (!chart.finalized_at || !chart.finalized_by) {
+    throw new Error('Chart must be finalized by a clinician before it can be approved');
+  }
+
   // Update chart status to delivered and lock it
+  // Keep the original finalized_at/finalized_by from clinician, don't override
+  const updatePayload: any = {
+    status: 'delivered_locked',
+    awaiting_clinician_review: false,
+    delivered_by: reviewerId,
+  };
+
+  // Set first_delivered_at if not already set (required by charts_delivered_check constraint)
+  if (!chart.first_delivered_at) {
+    updatePayload.first_delivered_at = new Date().toISOString();
+  }
+
   const { data, error } = await supabaseClient
     .from('charts')
-    .update({
-      status: 'delivered_locked',
-      finalized_at: new Date().toISOString(),
-      finalized_by: reviewerId,
-      awaiting_clinician_review: false, // Clear any pending review flag
-    })
+    .update(updatePayload)
     .eq('id', chartId)
     .select()
     .single();

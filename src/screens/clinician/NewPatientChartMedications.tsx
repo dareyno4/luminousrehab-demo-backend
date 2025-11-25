@@ -6,6 +6,9 @@ import { Button } from '../../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Screen, NavigationParams } from '../../App';
 import { Paperclip } from 'lucide-react';
+import MedicationBarcodeScanner, { ScannedMedication } from '../../components/MedicationBarcodeScanner';
+import MedicationOCRScanner from '../../components/MedicationOCRScanner';
+import { MedicationInfo } from '../../utils/ocrService';
 
 interface Props {
   navigation: {
@@ -43,6 +46,8 @@ export default function NewPatientChartMedications({ navigation, route }: Props)
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showCaptureOptions, setShowCaptureOptions] = useState(false);
   const [showScanBanner, setShowScanBanner] = useState(scannedMedications.length > 0);
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+  const [showOCRScanner, setShowOCRScanner] = useState(false);
   
   // Form state
   const [medName, setMedName] = useState('');
@@ -70,15 +75,45 @@ export default function NewPatientChartMedications({ navigation, route }: Props)
   };
 
   const handleScanOption = (scanType: string) => {
-    // TODO: Navigate to appropriate scanning screen based on type
-    // For now, show a placeholder message
-    alert(`${scanType} capture will be implemented. This will open camera/file picker for OCR scanning.`);
     setShowCaptureOptions(false);
+    
+    if (scanType === 'Barcode') {
+      setShowBarcodeScanner(true);
+    } else if (scanType === 'Bottle OCR') {
+      setShowOCRScanner(true);
+    } else {
+      // For Import PDF, show placeholder for now
+      alert(`${scanType} capture will be implemented.`);
+    }
   };
 
   const handleManualEntry = () => {
     setShowCaptureOptions(false);
     setIsAdding(true);
+  };
+
+  const handleBarcodeScanned = (meds: ScannedMedication[]) => {
+    const newMeds: Medication[] = meds.map((med, index) => ({
+      id: `barcode-${Date.now()}-${index}`,
+      name: med.name,
+      dosage: med.dosage,
+      frequency: med.frequency,
+      route: med.route,
+    }));
+    setMedications([...medications, ...newMeds]);
+    setShowBarcodeScanner(false);
+  };
+
+  const handleOCRScanned = (meds: Partial<MedicationInfo>[]) => {
+    const newMeds: Medication[] = meds.map((med, index) => ({
+      id: `ocr-${Date.now()}-${index}`,
+      name: med.name || '',
+      dosage: med.dosage || '',
+      frequency: med.frequency || '',
+      route: med.route || '',
+    }));
+    setMedications([...medications, ...newMeds]);
+    setShowOCRScanner(false);
   };
 
   const handleAddMedication = () => {
@@ -512,6 +547,23 @@ export default function NewPatientChartMedications({ navigation, route }: Props)
           </div>
         </div>
       </div>
+
+      {/* Barcode Scanner Modal */}
+      {showBarcodeScanner && (
+        <MedicationBarcodeScanner
+          onMedicationsScanned={handleBarcodeScanned}
+          onCancel={() => setShowBarcodeScanner(false)}
+        />
+      )}
+
+      {/* OCR Scanner Modal */}
+      {showOCRScanner && (
+        <MedicationOCRScanner
+          onMedicationsScanned={handleOCRScanned}
+          onCancel={() => setShowOCRScanner(false)}
+          modal={true}
+        />
+      )}
     </div>
   );
 }

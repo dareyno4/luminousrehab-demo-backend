@@ -1,11 +1,20 @@
 
-  import { defineConfig } from 'vite';
-  import react from '@vitejs/plugin-react-swc';
-  import path from 'path';
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react-swc';
+import path from 'path';
+import { writeFileSync } from 'fs';
 
 
-  export default defineConfig({
-    plugins: [react()],
+export default defineConfig({
+  plugins: [
+    react(),
+    {
+      name: 'create-nojekyll',
+      closeBundle() {
+        writeFileSync('build/.nojekyll', '');
+      }
+    }
+  ],
     envPrefix: 'VITE_',
     base: '/luminousrehab-demo/', // Add this for GitHub Pages
     resolve: {

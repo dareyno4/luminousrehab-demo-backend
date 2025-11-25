@@ -481,6 +481,7 @@ const fileInputRef = useRef<HTMLInputElement | null>(null);
         ocr_confidence: normalizedConfidence ?? 0.8,
         verified: false,
         changed_after_verify: false,
+        scanned_image: (med as any).image || null, // Store the base64 image
       };
 
 

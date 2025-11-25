@@ -25,6 +25,8 @@ import { Screen, NavigationParams } from '../../App';
 import { supabaseClient } from '../../lib/supabase';
 import { approveChart, rejectChart } from '../../services/agencyAdminService';
 import { useAuth } from '../../context/AuthContext';
+import { toast } from 'sonner';
+import { Toaster } from '../../components/ui/sonner';
 
 interface Props {
   navigation: {
@@ -90,6 +92,8 @@ export default function ChartDetailView({ navigation, route }: Props) {
   const [showArchiveConfirmation, setShowArchiveConfirmation] = useState(false);
   const [showUnarchiveConfirmation, setShowUnarchiveConfirmation] = useState(false);
   const [showUnlockConfirmation, setShowUnlockConfirmation] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
+  const [isRejecting, setIsRejecting] = useState(false);
   
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [medications, setMedications] = useState<Medication[]>([]);
@@ -155,36 +159,52 @@ export default function ChartDetailView({ navigation, route }: Props) {
   };
 
   const handleApprove = async () => {
-    if (!user?.id || !chartId) return;
+    if (!user?.id || !chartId) {
+      toast.error('User not authenticated');
+      return;
+    }
 
     try {
+      setIsApproving(true);
       await approveChart(chartId, user.id);
       setShowApprovalModal(false);
       setReviewNotes('');
-      alert('Chart approved successfully!');
-      navigation.goBack();
+      toast.success('Chart approved and locked successfully!');
+      
+      // Reload chart data to show updated status
+      await loadChartData();
     } catch (err: any) {
       console.error('Error approving chart:', err);
-      alert(`Failed to approve chart: ${err.message}`);
+      toast.error(err.message || 'Failed to approve chart');
+    } finally {
+      setIsApproving(false);
     }
   };
 
   const handleRequestChanges = async () => {
     if (!reviewNotes.trim()) {
-      alert('Please provide feedback notes for the clinician.');
+      toast.error('Please provide feedback notes for the clinician');
       return;
     }
-    if (!user?.id || !chartId) return;
+    if (!user?.id || !chartId) {
+      toast.error('User not authenticated');
+      return;
+    }
 
     try {
+      setIsRejecting(true);
       await rejectChart(chartId, reviewNotes, user.id);
       setShowReverificationModal(false);
       setReviewNotes('');
-      alert('Reverification request sent to clinician!');
-      navigation.goBack();
+      toast.success('Chart returned to clinician for changes');
+      
+      // Reload chart data to show updated status
+      await loadChartData();
     } catch (err: any) {
       console.error('Error rejecting chart:', err);
-      alert(`Failed to send reverification request: ${err.message}`);
+      toast.error(err.message || 'Failed to send reverification request');
+    } finally {
+      setIsRejecting(false);
     }
   };
 
@@ -341,6 +361,7 @@ export default function ChartDetailView({ navigation, route }: Props) {
 
   return (
     <div className="h-screen flex flex-col bg-[#f8fafc]">
+      <Toaster />
       {/* Header */}
       <div className="bg-gradient-to-r from-[#10B981] to-[#059669] p-5">
         <div className="flex items-center justify-between mb-4">
@@ -630,10 +651,20 @@ export default function ChartDetailView({ navigation, route }: Props) {
             </Button>
             <Button
               onClick={handleApprove}
+              disabled={isApproving}
               className="w-full sm:w-auto bg-[#10B981] hover:bg-[#059669] text-white"
             >
-              <CheckCircle className="w-4 h-4 mr-2" />
-              Confirm Approval
+              {isApproving ? (
+                <>
+                  <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Approving...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Confirm Approval
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -681,10 +712,20 @@ export default function ChartDetailView({ navigation, route }: Props) {
             </Button>
             <Button
               onClick={handleRequestChanges}
+              disabled={isRejecting}
               className="w-full sm:w-auto bg-[#F59E0B] hover:bg-[#D97706] text-white"
             >
-              <RotateCcw className="w-4 h-4 mr-2" />
-              Send for Reverification
+              {isRejecting ? (
+                <>
+                  <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Send for Reverification
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

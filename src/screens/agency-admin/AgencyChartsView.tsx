@@ -73,6 +73,7 @@ import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
 import { Toaster } from '../../components/ui/sonner';
 import { motion, AnimatePresence } from 'motion/react';
+import { approveChart } from '../../services/agencyAdminService';
 
 interface Props {
   navigation: {
@@ -163,7 +164,7 @@ const mockCharts: Chart[] = [
 ];
 
 export default function AgencyChartsView({ navigation }: Props) {
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showProfileSheet, setShowProfileSheet] = useState(false);
@@ -172,6 +173,7 @@ export default function AgencyChartsView({ navigation }: Props) {
   const [isReassignModalOpen, setIsReassignModalOpen] = useState(false);
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
   const [returnNotes, setReturnNotes] = useState('');
+  const [approvingChartId, setApprovingChartId] = useState<string | null>(null);
 
   const handleLogout = () => {
     logout();
@@ -183,8 +185,23 @@ export default function AgencyChartsView({ navigation }: Props) {
     navigation.navigate('ChartDetailView', { chartId, patientName });
   };
 
-  const handleApproveChart = (chartId: string) => {
-    toast.success('Chart approved and locked successfully');
+  const handleApproveChart = async (chartId: string) => {
+    if (!user?.id) {
+      toast.error('User not authenticated');
+      return;
+    }
+
+    try {
+      setApprovingChartId(chartId);
+      await approveChart(chartId, user.id);
+      toast.success('Chart approved and locked successfully');
+      // Optionally refresh the charts list or update local state
+    } catch (error: any) {
+      console.error('Error approving chart:', error);
+      toast.error(error.message || 'Failed to approve chart');
+    } finally {
+      setApprovingChartId(null);
+    }
   };
 
   const handleReturnChart = () => {
@@ -338,7 +355,7 @@ export default function AgencyChartsView({ navigation }: Props) {
             onClick={() => setStatusFilter('needs-review')}
             className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
               statusFilter === 'needs-review'
-                ? 'bg-[#F59E0B] text-white shadow-sm'
+                ? 'bg-[#f50b0b] text-white shadow-sm'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
@@ -613,10 +630,20 @@ export default function AgencyChartsView({ navigation }: Props) {
                             size="sm"
                             variant="outline"
                             onClick={() => handleApproveChart(chart.id)}
+                            disabled={approvingChartId === chart.id}
                             className="border-[#10B981] text-[#10B981] hover:bg-[#10B981]/10 rounded-xl"
                           >
-                            <Check className="w-4 h-4 mr-2" />
-                            Approve & Lock
+                            {approvingChartId === chart.id ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                                Approving...
+                              </>
+                            ) : (
+                              <>
+                                <Check className="w-4 h-4 mr-2" />
+                                Approve & Lock
+                              </>
+                            )}
                           </Button>
                         </>
                       )}

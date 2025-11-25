@@ -27,6 +27,7 @@ export interface ScannedMedication {
   dosage: string;
   frequency: string;
   route: string;
+  image?: string; // base64 data URL of scanned image
 }
 
 interface Props {
@@ -365,9 +366,10 @@ export default function MedicationBarcodeScanner({ onMedicationsScanned, onCance
 
     const scannedMed: ScannedMedication = {
       name: medication.brand_name || medication.generic_name || 'Unknown',
-      dosage: medication.active_ingredients?.[0]?.strength || '',
-      frequency: 'Once daily',
+      dosage: medication.active_ingredients?.[0]?.strength || 'See package',
+      frequency: 'As directed',
       route: medication.route?.[0] || 'Oral',
+      image: image || undefined, // Include the scanned image
     };
 
     onMedicationsScanned([scannedMed]);
