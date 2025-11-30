@@ -254,33 +254,78 @@ export default function AgencyPatientsView({}: Props) {
     }
     
     try {
-      const patientData = {
-        first_name: newPatient.firstName,
-        last_name: newPatient.lastName,
-        date_of_birth: newPatient.dob,
-        address_line1: newPatient.addressLine1 || undefined,
-        address_line2: newPatient.addressLine2 || undefined,
-        city: newPatient.city || undefined,
-        state: newPatient.state || undefined,
-        zip_code: newPatient.zipCode || undefined,
-        phone: newPatient.phone || undefined,
-        email: newPatient.email || undefined,
-      };
-      
-      const createdPatient = await createPatient(patientData, user.tenant_id, user.id);
-      
-      // If a clinician was assigned, update the patient
-      if (newPatient.assignedClinician) {
-        await supabaseClient
-          .from('patients')
-          .update({ assigned_clinician_id: newPatient.assignedClinician })
-          .eq('id', createdPatient.id);
+      // Check if patient already exists
+      const { data: existingPatients, error: searchError } = await supabaseClient
+        .from('patients')
+        .select(`
+          id, 
+          first_name, 
+          last_name, 
+          date_of_birth,
+          charts (
+            id,
+            status,
+            created_at
+          )
+        `)
+        .eq('tenant_id', user.tenant_id)
+        .eq('first_name', newPatient.firstName)
+        .eq('last_name', newPatient.lastName)
+        .eq('date_of_birth', newPatient.dob);
+
+      if (searchError) {
+        console.error('Error searching for existing patient:', searchError);
+        toast.error('Failed to check for existing patient');
+        return;
+      }
+
+      let patientId: string;
+      let isNewPatient = false;
+
+      if (existingPatients && existingPatients.length > 0) {
+        const existingPatient = existingPatients[0];
+        patientId = existingPatient.id;
+        
+        // Check if patient already has a chart
+        if (existingPatient.charts && existingPatient.charts.length > 0) {
+          toast.error(`Patient "${newPatient.firstName} ${newPatient.lastName}" already exists with a chart. Each patient can only have one chart.`);
+          return;
+        }
+        
+        console.log(`Using existing patient (no chart): ${newPatient.firstName} ${newPatient.lastName} (ID: ${patientId})`);
+        toast.info('Patient already exists. Creating chart for existing patient.');
+      } else {
+        // Create new patient
+        const patientData = {
+          first_name: newPatient.firstName,
+          last_name: newPatient.lastName,
+          date_of_birth: newPatient.dob,
+          address_line1: newPatient.addressLine1 || undefined,
+          address_line2: newPatient.addressLine2 || undefined,
+          city: newPatient.city || undefined,
+          state: newPatient.state || undefined,
+          zip_code: newPatient.zipCode || undefined,
+          phone: newPatient.phone || undefined,
+          email: newPatient.email || undefined,
+        };
+        
+        const createdPatient = await createPatient(patientData, user.tenant_id, user.id);
+        patientId = createdPatient.id;
+        isNewPatient = true;
+        
+        // If a clinician was assigned, update the patient
+        if (newPatient.assignedClinician) {
+          await supabaseClient
+            .from('patients')
+            .update({ assigned_clinician_id: newPatient.assignedClinician })
+            .eq('id', patientId);
+        }
       }
       
-      // Create an empty chart for the patient
+      // Create a chart for the patient
       await createChart(
         {
-          patient_id: createdPatient.id,
+          patient_id: patientId,
           source: 'empty_chart',
           status: 'active',
         },
@@ -288,7 +333,12 @@ export default function AgencyPatientsView({}: Props) {
         user.id
       );
       
-      toast.success(`Patient "${newPatient.firstName} ${newPatient.lastName}" added successfully with an empty chart`);
+      if (isNewPatient) {
+        toast.success(`Patient "${newPatient.firstName} ${newPatient.lastName}" added successfully with a chart`);
+      } else {
+        toast.success(`Chart created for existing patient "${newPatient.firstName} ${newPatient.lastName}"`);
+      }
+      
       setIsAddPatientModalOpen(false);
       setNewPatient({ 
         firstName: '', 

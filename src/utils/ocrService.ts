@@ -1,5 +1,10 @@
 // OCR Service for Web using Tesseract.js
 import Tesseract from 'tesseract.js';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Configure PDF.js worker - use local worker file from public folder
+// This avoids issues with dynamic imports and CDN loading
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf-worker/pdf.worker.min.mjs';
 
 // Debug flag: set to true to enable verbose OCR logging. Disabled for performance.
 const OCR_DEBUG = false;
@@ -32,6 +37,15 @@ export interface MedicationInfo {
   instructions: string;
   confidence: number;
   image?: string; // base64 data URL of scanned image
+}
+
+export interface PatientInfo {
+  firstName?: string;
+  lastName?: string;
+  dateOfBirth?: string;
+  address?: string;
+  phone?: string;
+  medicalRecordNumber?: string;
 }
 
 /**
@@ -359,6 +373,58 @@ async function preprocessImage(imageSource: File | Blob | string): Promise<{
 }
 
 /**
+ * Convert PDF to images (one per page)
+ * @param pdfFile - PDF file to convert
+ * @param pageNumber - Specific page to convert (1-indexed), or undefined for ALL pages
+ * @returns Array of image data URLs
+ */
+export async function convertPDFToImages(pdfFile: File, pageNumber?: number): Promise<string[]> {
+  const arrayBuffer = await pdfFile.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  
+  const totalPages = pdf.numPages;
+  // If pageNumber specified, render that page; otherwise render ALL pages
+  const pagesToRender = pageNumber ? [pageNumber] : Array.from({ length: totalPages }, (_, i) => i + 1);
+  
+  console.log(`📄 PDF has ${totalPages} pages, rendering ${pagesToRender.length} page(s)`);
+  
+  const images: string[] = [];
+  
+  for (const pageNum of pagesToRender) {
+    if (pageNum > totalPages) {
+      console.warn(`Page ${pageNum} exceeds total pages ${totalPages}`);
+      continue;
+    }
+    
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 2.0 }); // Higher scale for better OCR
+    
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    
+    if (!context) {
+      throw new Error('Failed to get canvas context');
+    }
+    
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    
+    await page.render({
+      canvasContext: context,
+      viewport: viewport,
+      canvas: canvas
+    }).promise;
+    
+    const imageDataURL = canvas.toDataURL('image/png');
+    images.push(imageDataURL);
+    
+    console.log(`✅ Rendered PDF page ${pageNum} (${viewport.width}x${viewport.height})`);
+  }
+  
+  return images;
+}
+
+/**
  * Run OCR on an image file or blob with intelligent preprocessing
  * @param imageSource - File, Blob, or base64 string
  * @returns Extracted text, confidence, and image analysis metadata
@@ -431,22 +497,43 @@ export async function runOCR(imageSource: File | Blob | string): Promise<OCRResu
   }
 }
 
+function isCommonFalsePositive(text: string, currentMed: Partial<MedicationInfo>): boolean {
+  const lower = text.toLowerCase();
+  if (lower.includes("cvshealth")) return true;
+  if (lower.includes("pharmacy")) return true;
+  if (/^tablets?,?\s*$/i.test(text)) return true; // "TABLETS," or "Tablets"
+
+  // If it looks like a drug name (ends in common suffix), trust it even if it's in other fields
+  // (Sometimes instructions repeat the drug name)
+  const drugSuffixes = /(?:ine|ide|zol|pam|in|vir|mycin|cillin|statin|zil)$/i;
+  if (drugSuffixes.test(text)) return false;
+
+  if (currentMed.frequency && currentMed.frequency.toLowerCase().includes(lower)) return true;
+  if (currentMed.route && currentMed.route.toLowerCase().includes(lower)) return true;
+  if (currentMed.instructions && currentMed.instructions.toLowerCase().includes(lower)) return true;
+  return false;
+}
+
+
 /**
  * Parse a SINGLE medication from text
  */
 export function parseMedicationFromText(text: string): Partial<MedicationInfo> {
-  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+  // Normalize text for easier parsing: keep newlines but normalize spaces
+  const normalizedText = text.replace(/\r\n/g, '\n');
+  const lines = normalizedText.split('\n').map(line => line.trim()).filter(Boolean);
   const medication: Partial<MedicationInfo> = {};
 
   if (OCR_DEBUG) {
     console.log('🔍 Parsing OCR text for single medication...');
   }
 
+  // 1. Dosage
   const dosagePatterns = [
     /\((\d+(?:\.\d+)?)\s*(?:mg|mcg|g|ml|units?)\)/i,
     /(\d+(?:\.\d+)?)\s*(?:mg|mcg|g|ml|units?)\b/i,
   ];
-  
+
   let dosageMatch = null;
   for (const pattern of dosagePatterns) {
     const match = text.match(pattern);
@@ -459,107 +546,152 @@ export function parseMedicationFromText(text: string): Partial<MedicationInfo> {
     }
   }
 
+  // 2. Frequency - Improved for multi-word and multi-line
   const frequencyPatterns = [
-    /take\s+\d+\s+tablet/i,
-    /\b(once|twice|three times?)\s+(?:daily|per day|a day|in the morning|in the evening)/i,
+    // Removed "take 1 tablet" as it's usually instructions
+    /\b(once|twice|three times?|four times?|two times?)\s+(?:daily|per day|a day|in the morning|in the evening)/i,
     /\b(QD|BID|TID|QID|Q\d+H)\b/i,
     /(?:in the|every)\s+(morning|evening|afternoon|night)/i,
   ];
-  
+
+  // Check original text (with newlines) for frequency to catch split lines if needed, 
+  // but usually frequency is on one line or standard phrases.
+  // We replace newlines with spaces for regex search to handle "TWO TIMES \n A DAY"
+  const textSingleLine = text.replace(/\n/g, ' ');
+
   for (const pattern of frequencyPatterns) {
-    const match = text.match(pattern);
+    const match = textSingleLine.match(pattern);
     if (match) {
       medication.frequency = match[0].trim();
       break;
     }
   }
 
+  // 3. Route - Improved for multi-line (e.g. "by \n mouth")
   const routePatterns = [
-    /by\s+(mouth|injection|inhalation)/i,
+    /(by\s+(?:mouth|injection|inhalation))/i, // Capture "by mouth" fully
     /\b(oral|topical|injection|IV|IM|sublingual|transdermal|inhalation|ophthalmic|otic)\b/i,
   ];
-  
+
   for (const pattern of routePatterns) {
-    const match = text.match(pattern);
+    const match = textSingleLine.match(pattern);
     if (match) {
+      // If we have a capture group 1, use it (for "by mouth"), otherwise use match[0]
       medication.route = match[1] || match[0].trim();
       break;
     }
   }
 
+  // 4. Prescriber - Improved regex for all caps and middle initials
   const prescriberPatterns = [
-    /(?:Dr\.|Doctor)\s+([A-Z]\.\s*)?([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
-    /([A-Z][a-z]+\s+[A-Z]\s+[A-Z][a-z]+)\s+(?:MD|RPh|NU|par F)/i,
+    /(?:Dr\.|Doctor)\s+([A-Z]\.\s*)?([A-Z][a-z]+\s+[A-Z][a-z]+)/i, // Dr. John Doe
+    /(?:Dr\.|Doctor)\s+([A-Z]\s+)?([A-Z]+)/i, // Dr. D INTERCOM (All caps)
+    /([A-Z][a-z]+\s+[A-Z]\.?\s+[A-Z][a-z]+)(?:\s*,?\s*MD|\s+MD)/i, // Patrick K Campbell, MD or Patrick K. Campbell MD
+    /Prescriber:\s*([A-Za-z\s\.]+)/i,
   ];
-  
+
   for (const pattern of prescriberPatterns) {
-    const match = text.match(pattern);
-    if (match) {
-      medication.prescriber = match[0].trim();
+    // Create a global regex to find all matches
+    const globalPattern = new RegExp(pattern.source, pattern.flags + (pattern.flags.includes('g') ? '' : 'g'));
+    const matches = text.matchAll(globalPattern);
+
+    for (const match of matches) {
+      // Clean up the matched name
+      let name = match[1] || match[0];
+
+      // Check for false positives like "DR. AUTH REQUIRED"
+      if (name.includes("AUTH REQUIRED") || name.includes("REFILLS") || name === "AUTH" || match[0].includes("DR. AUTH")) continue;
+
+      // If we matched the full group including "Dr.", use it, otherwise construct it
+      if (match[0].toLowerCase().startsWith("dr") || match[0].toLowerCase().startsWith("prescriber")) {
+        medication.prescriber = match[0].replace(/Prescriber:\s*/i, '').trim();
+      } else {
+        medication.prescriber = match[0].trim();
+      }
+      // If we found a valid one, stop searching this pattern and other patterns? 
+      // Usually we want the first VALID one.
       break;
     }
+    if (medication.prescriber) break;
   }
 
+  // 5. Quantity
   const quantityMatch = text.match(/(?:qty|quantity)\s*:?\s*(\d+)/i);
   if (quantityMatch) {
     medication.quantity = quantityMatch[1];
+  } else {
+    // Fallback: look for "30 Tablets" or similar standalone if not found
+    const looseQtyMatch = text.match(/^(\d+)\s+(?:tablets|capsules|pills)/im);
+    if (looseQtyMatch) {
+      medication.quantity = looseQtyMatch[1];
+    }
   }
 
+  // 6. Refills
   const refillsMatch = text.match(/(?:refills?|no refills)\s*:?\s*(\d+|remaining)/i);
   if (refillsMatch) {
     medication.refills = refillsMatch[1];
   }
 
-  const instructionMatch = text.match(/take\s+\d+\s+tablet[^.]*\./i);
+  // 7. Instructions - Improved to capture full sentences across lines
+  // Look for "Take" or "Use" and capture until a period or end of block
+  const instructionPattern = /(?:Take|Use)\s+(?:one|two|three|\d+)\s+(?:tablet|capsule|pill|application).+?(?:\.|$)/is;
+  const instructionMatch = text.match(instructionPattern);
+
   if (instructionMatch) {
-    medication.instructions = instructionMatch[0].trim();
+    // Clean up newlines in instructions
+    medication.instructions = instructionMatch[0].replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
+  // 8. Medication Name - Improved logic
+
+  // Strategy A: Look for mixed case pattern (often brand names like amLODIPine)
   const mixedCasePattern = /\b([a-z]+[A-Z][A-Za-z]+)\b/;
   const mixedCaseMatch = text.match(mixedCasePattern);
-  
+
   if (mixedCaseMatch && mixedCaseMatch[1]) {
     const candidateName = mixedCaseMatch[1].trim();
-    const candidateLower = candidateName.toLowerCase();
-    
-    const isUsedInFrequency = medication.frequency && medication.frequency.toLowerCase().includes(candidateLower);
-    const isUsedInRoute = medication.route && medication.route.toLowerCase().includes(candidateLower);
-    const isUsedInInstructions = medication.instructions && medication.instructions.toLowerCase().includes(candidateLower);
-    const isUsedInQuantity = medication.quantity && candidateLower.includes(medication.quantity.toLowerCase());
-    
-    if (!isUsedInFrequency && !isUsedInRoute && !isUsedInInstructions && !isUsedInQuantity) {
+    // Validate it's not a common false positive
+    if (!isCommonFalsePositive(candidateName, medication)) {
       medication.name = candidateName;
-      
-      if (OCR_DEBUG) {
-        console.log(`✅ Found medication name with mixed case pattern: "${medication.name}"`);
-      }
+      if (OCR_DEBUG) console.log(`✅ Found medication name with mixed case pattern: "${medication.name}"`);
     }
   }
-  
+
+  // Strategy B: Look for name before dosage (e.g. "Ibuprofen 800 mg")
   if (!medication.name && dosageMatch && dosageMatch.index !== undefined) {
-    const textBeforeDosage = text.substring(0, dosageMatch.index).trim();
-    const namePattern = /([A-Z][A-Za-z]+(?:\s+[A-Z]?[A-Za-z]+){0,2})\s*$/i;
-    const nameMatch = textBeforeDosage.match(namePattern);
-    
-    if (nameMatch && nameMatch[1]) {
-      const candidateName = nameMatch[1].trim();
-      const candidateLower = candidateName.toLowerCase();
-      
-      const isUsedInFrequency = medication.frequency && medication.frequency.toLowerCase().includes(candidateLower);
-      const isUsedInRoute = medication.route && medication.route.toLowerCase().includes(candidateLower);
-      const isUsedInInstructions = medication.instructions && medication.instructions.toLowerCase().includes(candidateLower);
-      const isUsedInQuantity = medication.quantity && candidateLower.includes(medication.quantity.toLowerCase());
-      
-      if (!isUsedInFrequency && !isUsedInRoute && !isUsedInInstructions && !isUsedInQuantity) {
-        medication.name = candidateName;
-        
-        if (OCR_DEBUG) {
-          console.log(`✅ Found medication name before dosage: "${medication.name}"`);
+    // Let's try to find the line with the dosage
+    const lines = text.split('\n');
+    const dosageLineIndex = lines.findIndex(l => l.includes(dosageMatch![0]));
+
+    if (dosageLineIndex !== -1) {
+      const line = lines[dosageLineIndex];
+      const dosageIndexInLine = line.indexOf(dosageMatch![0]);
+      const potentialName = line.substring(0, dosageIndexInLine).trim();
+
+      if (potentialName.length > 3 && !/take|use|qty/i.test(potentialName)) {
+        if (OCR_DEBUG) console.log(`  Strategy B: Potential name on same line as dosage: "${potentialName}"`);
+        if (!isCommonFalsePositive(potentialName, medication)) {
+          medication.name = potentialName;
+          if (OCR_DEBUG) console.log(`✅ Found medication name on same line as dosage: "${medication.name}"`);
+        } else if (OCR_DEBUG) {
+          console.log(`  Strategy B: Rejected "${potentialName}" as false positive.`);
+        }
+      } else if (dosageLineIndex > 0) {
+        // Check previous line if current line starts with dosage
+        const prevLine = lines[dosageLineIndex - 1].trim();
+        if (OCR_DEBUG) console.log(`  Strategy B: Potential name on previous line: "${prevLine}"`);
+        if (prevLine.length > 3 && !isCommonFalsePositive(prevLine, medication)) {
+          medication.name = prevLine;
+          if (OCR_DEBUG) console.log(`✅ Found medication name on previous line: "${medication.name}"`);
+        } else if (OCR_DEBUG) {
+          console.log(`  Strategy B: Rejected "${prevLine}" as false positive.`);
         }
       }
     }
   }
-  
+
+  // Strategy C: Fallback to heuristic line scanning
   if (!medication.name) {
     const excludePatterns = [
       /pharmacy/i, /hospital/i, /research/i, /children/i, /jude/i,
@@ -567,24 +699,49 @@ export function parseMedicationFromText(text: string): Partial<MedicationInfo> {
       /^\d+\s+[A-Z][a-z]+\s+(Place|Street|Road|Ave|Dr)/i,
       /Rx\s*[:#]?\s*\d+/i, /written/i, /filled/i, /test/i,
       /patient/i, /discard/i, /commonly\s+known/i,
-      /no\s+refills/i, /^take\s+\d+/i, /^by\s+mouth/i,
-      /MRN/i, /mersin/i, /TET/i,
+      /no\s+refills/i, /^take\s+(?:\d+|one|two)/i, /^by\s+mouth/i,
+      /MRN/i, /CVSHealth/i, /Health/i, /Non-Drowsy/i,
+      /Questions\?/i, /TABLETS?,?\s*\d+/i
     ];
-    
-    const drugNameLine = lines.find(line => {
-      if (!/[A-Za-z]{3,}/.test(line)) return false;
-      if (line.length < 3 || line.length > 40) return false;
-      
-      for (const pattern of excludePatterns) {
-        if (pattern.test(line)) return false;
-      }
-      
-      const letterRatio = (line.match(/[A-Za-z]/g) || []).length / line.length;
-      return letterRatio > 0.6;
-    });
 
-    if (drugNameLine) {
-      medication.name = drugNameLine.replace(/^\W+|\W+$/g, '').trim();
+    // Prioritize lines that look like drug names (ending in common suffixes)
+    const drugSuffixes = /(?:ine|ide|zol|pam|in|vir|mycin|cillin|statin|zil)$/i;
+
+    let bestCandidate = null;
+    let bestScore = 0;
+
+    for (const line of lines) {
+      if (line.length < 3 || line.length > 40) continue;
+      if (excludePatterns.some(p => p.test(line))) continue;
+
+      // Skip if it's just the dosage or frequency, BUT ONLY if it's almost the whole line
+      // If the line is "IBUPROFEN 800 MG", we want to keep it.
+      // If the line is "800 MG", we skip it.
+      if (medication.dosage && line.includes(medication.dosage)) {
+        const lineWithoutDosage = line.replace(medication.dosage, '').trim();
+        if (lineWithoutDosage.length < 3) continue;
+      }
+
+      let score = 0;
+      if (drugSuffixes.test(line)) score += 5;
+      if (/^[A-Z\s]+$/.test(line)) score += 2; // All caps often drug name on label
+      if (line.includes("TABLET") || line.includes("CAPSULE")) score += 1;
+
+      // Penalties
+      if (line.includes(" ")) score -= 1; // Single words are more likely generic names
+      if (/^tablets?,?$/i.test(line)) score -= 10; // "TABLETS" alone is bad
+      if (line.toLowerCase().startsWith("tablets")) score -= 5; // Starts with tablets
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestCandidate = line;
+      }
+    }
+
+    if (bestCandidate) {
+      // Clean up "TABLET" etc from name
+      // Use \b to ensure we don't match inside words, and handle start of string
+      medication.name = bestCandidate.replace(/\b(?:TABLETS?|CAPSULES?|Pills)\b.*/i, '').replace(/,\s*$/, '').trim();
     }
   }
 
@@ -664,6 +821,161 @@ export function getMedicationConfidence(med: Partial<MedicationInfo>): number {
   if (med.instructions) { score += 5; total += 5; }
 
   return total > 0 ? Math.round((score / total) * 100) : 0;
+}
+
+/**
+ * Parse patient information from OCR text (prescription PDFs often have patient info)
+ */
+export function parsePatientInfoFromText(text: string): PatientInfo {
+  const patientInfo: PatientInfo = {};
+  
+  // Clean up the text - normalize whitespace
+  const cleanText = text.replace(/\s+/g, ' ').trim();
+  
+  // Name patterns - Enhanced to stop at labels like "Date of Birth", "DOB", etc.
+  const namePatterns = [
+    /Patient\s*Name\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*?)(?:\s+(?:Date|DOB|Phone|MRN|Address))/i,
+    /Name\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*?)(?:\s+(?:Date|DOB|Phone|MRN|Address))/i,
+    /For\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*?)(?:\s+(?:Date|DOB|Phone|MRN|Address))/i,
+    // Fallback without lookahead
+    /Patient\s*Name\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/i,
+    /Name\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/i,
+  ];
+  
+  for (const pattern of namePatterns) {
+    const match = cleanText.match(pattern);
+    if (match && match[1]) {
+      const fullName = match[1].trim();
+      // Remove any trailing labels that might have been captured
+      const cleanedName = fullName.replace(/\b(Date|DOB|Phone|MRN|Address|of|Birth).*$/i, '').trim();
+      const parts = cleanedName.split(/\s+/).filter(p => p.length > 0);
+      
+      if (parts.length >= 2) {
+        patientInfo.firstName = parts[0];
+        patientInfo.lastName = parts.slice(1).join(' ');
+        break;
+      } else if (parts.length === 1) {
+        // Single name - try next pattern
+        continue;
+      }
+    }
+  }
+  
+  // Date of Birth patterns - Enhanced with more formats
+  const dobPatterns = [
+    /DOB\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    /Date\s*of\s*Birth\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    /Birth\s*Date\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    /D\.?O\.?B\.?\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+  ];
+  
+  for (const pattern of dobPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      let dob = match[1].trim();
+      // Normalize date format to MM/DD/YYYY
+      const parts = dob.split(/[\/\-]/);
+      if (parts.length === 3) {
+        let [month, day, year] = parts;
+        // Handle 2-digit years
+        if (year.length === 2) {
+          const yearNum = parseInt(year);
+          year = yearNum > 30 ? `19${year}` : `20${year}`;
+        }
+        // Pad month and day
+        month = month.padStart(2, '0');
+        day = day.padStart(2, '0');
+        dob = `${month}/${day}/${year}`;
+      }
+      patientInfo.dateOfBirth = dob;
+      break;
+    }
+  }
+  
+  // Phone patterns - Enhanced to capture various formats and OCR errors
+  const phonePatterns = [
+    // Match: Phone: (480) 555-2398 or Phone: 480-555-2398
+    /Phone\s*:?\s*([\(\{]?\d{3}[\)\}]?[\s\-\.]?\d{3}[\s\-\.]?\d{4})/i,
+    // Match: Tel: (480) 555-2398 (with { or ( for OCR errors)
+    /Tel(?:ephone)?\s*:?\s*([\(\{]?\d{3}[\)\}]?[\s\-\.]?\d{3}[\s\-\.]?\d{4})/i,
+    // Match standalone: (480) 555-2398 or {480) 555-2398 (OCR error)
+    /[\(\{](\d{3})[\)\}]\s*(\d{3})[\s\-](\d{4})/,
+    // Match standalone: 480-555-2398 or 480.555.2398
+    /\b(\d{3})[\s\-\.](\d{3})[\s\-\.](\d{4})\b/,
+  ];
+  
+  for (const pattern of phonePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      let phone: string;
+      // If pattern has multiple capture groups (like the standalone patterns)
+      if (match.length > 2 && match[2]) {
+        phone = `(${match[1]}) ${match[2]}-${match[3]}`;
+      } else if (match[1]) {
+        // Clean up OCR errors: replace { with ( and } with )
+        phone = match[1].trim().replace(/[\{\}]/g, (m) => m === '{' ? '(' : ')');
+      } else {
+        continue;
+      }
+      
+      // Validate it's not an MRN or other ID
+      const context = match.index !== undefined 
+        ? text.substring(Math.max(0, match.index - 20), Math.min(text.length, match.index + match[0].length + 20))
+        : '';
+      
+      if (!/\b(?:MRN|ID|Record|Number)\b/i.test(context) || /\b(?:Phone|Tel)\b/i.test(context)) {
+        patientInfo.phone = phone;
+        break;
+      }
+    }
+  }
+  
+  // Address patterns - More precise extraction from structured data
+  // Look for address between specific markers, not everything
+  const addressPatterns = [
+    /Address\s*:?\s*([0-9]+\s+[A-Za-z\s,]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Terrace|Place|Way)[^,\n]*(?:,\s*[A-Za-z\s]+,\s*[A-Z]{2}\s*\d{5})?)/i,
+    /(?:Patient\s*)?Address\s*:?\s*([^\n]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Terrace)[^\n]*)/i,
+    /\b(\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Terrace|Place)(?:,?\s+[A-Za-z\s]+,\s*[A-Z]{2}\s*\d{5})?)\b/i,
+  ];
+  
+  for (const pattern of addressPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      let address = match[1].trim();
+      // Clean up the address - remove phone numbers and MRNs that might be included
+      address = address.replace(/(?:Phone|MRN|Medical\s+Record).*$/i, '').trim();
+      // Remove any trailing commas
+      address = address.replace(/,\s*$/, '');
+      patientInfo.address = address;
+      break;
+    }
+  }
+  
+  // Medical Record Number / Patient ID - Enhanced
+  const mrnPatterns = [
+    /MRN\s*:?\s*([A-Z0-9]{5,15})/i,
+    /Medical\s*Record\s*(?:Number|#|No\.?)\s*:?\s*([A-Z0-9]{5,15})/i,
+    /Patient\s*ID\s*:?\s*([A-Z0-9]{5,15})/i,
+    /\bMRN[:\s]+([0-9]{7,10})\b/i,
+  ];
+  
+  for (const pattern of mrnPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      const mrn = match[1].trim();
+      // Validate it's not a phone number (no dashes/parens in MRN typically)
+      if (!/[\(\)\-]/.test(mrn) || /^\d+$/.test(mrn.replace(/[\-\s]/g, ''))) {
+        patientInfo.medicalRecordNumber = mrn;
+        break;
+      }
+    }
+  }
+  
+  if (OCR_DEBUG) {
+    console.log('📋 Parsed patient info:', patientInfo);
+  }
+  
+  return patientInfo;
 }
 
 // ============================================================================

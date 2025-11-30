@@ -98,11 +98,14 @@ export interface NavigationParams {
   medicationData?: any;
   patientName?: string;
   scannedMedications?: Partial<MedicationInfo>[];
+  openPDFScanner?: boolean;
   prefillData?: {
     firstName: string;
     lastName: string;
     dateOfBirth: string;
     medicalRecordNumber: string;
+    phone?: string;
+    address?: string;
   };
   prefillMedications?: any[];
   patient?: {

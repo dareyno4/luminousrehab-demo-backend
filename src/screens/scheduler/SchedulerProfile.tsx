@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../context/AuthContext';
+import { userProfileService, type UserProfile } from '../../services/userProfileService';
 import {
   Mail,
   Phone,
@@ -14,6 +16,7 @@ import {
   Camera,
   Trash2,
   ExternalLink,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
@@ -37,22 +40,63 @@ interface Props {
 }
 
 export default function SchedulerProfile({ navigation }: Props) {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [stats, setStats] = useState({ totalAssignments: 0, totalCharts: 0, pendingReview: 0, thisWeekScheduled: 0 });
+  const [tenantInfo, setTenantInfo] = useState<any>(null);
+
+  useEffect(() => {
+    if (user?.id && user?.tenant_id) {
+      loadProfileData();
+    }
+  }, [user]);
+
+  const loadProfileData = async () => {
+    if (!user?.id || !user?.tenant_id) return;
+    
+    try {
+      setLoading(true);
+      const [profileData, statsData, tenant] = await Promise.all([
+        userProfileService.getUserProfile(user.id),
+        userProfileService.getSchedulerStatistics(user.id, user.tenant_id),
+        userProfileService.getTenantInfo(user.tenant_id),
+      ]);
+      
+      setProfile(profileData);
+      setStats(statsData);
+      setTenantInfo(tenant);
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      toast.error('Failed to load profile data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#f8fafc]">
+        <Loader2 className="w-8 h-8 text-[#F59E0B] animate-spin" />
+      </div>
+    );
+  }
+
   const profileData = {
-    name: 'Jessica Martinez',
+    name: `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim() || 'Unknown User',
     role: 'Scheduler',
-    email: 'jessica.martinez@healthcarepartners.com',
-    phone: '(555) 345-6789',
-    address: '789 Scheduling Center, Healthcare City, HC 12345',
-    agency: 'HealthCare Partners LLC',
-    agencyLicense: 'HHA-789456',
-    joinDate: 'February 20, 2024',
-    accountCreated: 'Jan 07, 2025',
-    lastUpdated: 'Feb 01, 2025',
-    // Scheduler-specific stats
-    totalAssignments: 2,
-    totalCharts: 2,
-    pendingReview: 0,
-    thisWeekScheduled: 18,
+    email: profile?.email || '',
+    phone: profile?.phone_number || 'Not provided',
+    address: profile?.address || 'Not provided',
+    agency: tenantInfo?.name || 'Healthcare Partners',
+    agencyLicense: tenantInfo?.license_number || 'N/A',
+    joinDate: profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Unknown',
+    accountCreated: profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown',
+    lastUpdated: profile?.last_login ? new Date(profile.last_login).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Never',
+    totalAssignments: stats.totalAssignments,
+    totalCharts: stats.totalCharts,
+    pendingReview: stats.pendingReview,
+    thisWeekScheduled: stats.thisWeekScheduled,
   };
 
   const handleAvatarUpload = () => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, User, MapPin, Phone, Calendar, Pill, ChevronRight, Check, Save } from 'lucide-react';
+import { ArrowLeft, User, MapPin, Phone, Calendar, Pill, ChevronRight, Check, Save, X } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Screen, NavigationParams } from '../../App';
 import { supabaseClient } from '../../lib/supabase';
@@ -98,35 +98,93 @@ export default function NewPatientChartReview({ navigation, route }: Props) {
     }
 
     try {
-      // 1) Insert patient into DB (use correct column names)
-      const { data: patientRow, error: patientError } = await supabaseClient
+      // 1) Check if patient already exists (by first name, last name, and DOB)
+      const { data: existingPatients, error: searchError } = await supabaseClient
         .from('patients')
-        .insert({
-          tenant_id: user.tenant_id,
-          first_name: patient.first_name,
-          last_name: patient.last_name,
-          date_of_birth: patient.dob,          // maps to schema's date_of_birth
-          address_line1: patient.address1,
-          address_line2: patient.address2 || null,
-          city: patient.city || null,
-          state: patient.state || null,
-          zip_code: patient.zip_code || null,
-          phone: patient.phone || null,
-          created_by: user.id,
-          assigned_clinician_id: user.id,
-        })
-        .select('id')      // we only need the id
-        .single();
+        .select(`
+          id, 
+          first_name, 
+          last_name, 
+          date_of_birth,
+          charts (
+            id,
+            status,
+            created_at,
+            medication_count
+          )
+        `)
+        .eq('tenant_id', user.tenant_id)
+        .eq('first_name', patient.first_name)
+        .eq('last_name', patient.last_name)
+        .eq('date_of_birth', patient.dob);
 
-      if (patientError || !patientRow) {
-        console.error('Error inserting patient:', patientError);
-        alert('Failed to save patient. Please try again.');
+      if (searchError) {
+        console.error('Error searching for existing patient:', searchError);
+        alert('Failed to check for existing patient. Please try again.');
         return;
       }
 
-      const patientId = patientRow.id as string;
+      let patientId: string;
+      let chartId: string | null = null;
+      let isNewPatient = false;
+      let existingChartFound = false;
 
-      // 2) Insert chart for this patient
+      if (existingPatients && existingPatients.length > 0) {
+        const existingPatient = existingPatients[0];
+        patientId = existingPatient.id;
+        
+        // Check if patient already has a chart
+        if (existingPatient.charts && existingPatient.charts.length > 0) {
+          // Patient already has a chart - use existing chart
+          const existingChart = existingPatient.charts[0];
+          chartId = existingChart.id;
+          existingChartFound = true;
+          console.log(`Patient already has a chart: ${patient.first_name} ${patient.last_name} (Chart ID: ${chartId})`);
+          
+          // Navigate to existing chart instead of creating new one
+          alert(`This patient already has an existing chart. You will be redirected to add medications to that chart.`);
+          
+          navigation.navigate('ChartDetail', {
+            chartId: chartId,
+            patientId: patientId,
+          });
+          return;
+        }
+        
+        console.log(`Using existing patient (no chart yet): ${patient.first_name} ${patient.last_name} (ID: ${patientId})`);
+      } else {
+        // Create new patient
+        const { data: patientRow, error: patientError } = await supabaseClient
+          .from('patients')
+          .insert({
+            tenant_id: user.tenant_id,
+            first_name: patient.first_name,
+            last_name: patient.last_name,
+            date_of_birth: patient.dob,
+            address_line1: patient.address1,
+            address_line2: patient.address2 || null,
+            city: patient.city || null,
+            state: patient.state || null,
+            zip_code: patient.zip_code || null,
+            phone: patient.phone || null,
+            created_by: user.id,
+            assigned_clinician_id: user.id,
+          })
+          .select('id')
+          .single();
+
+        if (patientError || !patientRow) {
+          console.error('Error inserting patient:', patientError);
+          alert('Failed to save patient. Please try again.');
+          return;
+        }
+
+        patientId = patientRow.id as string;
+        isNewPatient = true;
+        console.log(`Created new patient: ${patient.first_name} ${patient.last_name} (ID: ${patientId})`);
+      }
+
+      // 2) Insert chart for this patient (only if no existing chart found)
       const source = scanTypeToSource(scanType);
 
       const { data: chartRow, error: chartError } = await supabaseClient
@@ -148,7 +206,9 @@ export default function NewPatientChartReview({ navigation, route }: Props) {
         return;
       }
 
-      const chartId = chartRow.id as string;
+      chartId = chartRow.id as string;
+      console.log(`Created new chart (ID: ${chartId}) for patient ${patientId}`);
+      
       //insert medications
       if (medications.length > 0) {
       const medsPayload = medications.map((med) => ({
@@ -189,6 +249,8 @@ export default function NewPatientChartReview({ navigation, route }: Props) {
         patient,      // keep using the UI patient object for display
         patientId,
         chartId,
+        isNewPatient,  // Pass this flag so we can inform the user
+        existingChartFound,
       });
     } catch (err) {
       console.error('Unexpected error when saving chart:', err);
@@ -228,7 +290,14 @@ export default function NewPatientChartReview({ navigation, route }: Props) {
             <ArrowLeft className="w-5 h-5 text-white" />
           </button>
           <h1 className="text-lg text-white">New Patient Chart</h1>
-          <div className="w-10" />
+          <button
+            onClick={() => navigation.navigate('ClinicianDashboard')}
+            className="px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 flex items-center gap-2 transition-colors text-white text-sm font-medium"
+            aria-label="Exit to dashboard"
+          >
+            <X className="w-4 h-4" />
+            Exit
+          </button>
         </div>
       </div>
 

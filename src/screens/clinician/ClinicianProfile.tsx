@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft,
   User,
@@ -22,7 +22,11 @@ import {
   GraduationCap,
   Clock,
   BadgeCheck,
+  Loader2,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { userProfileService, type UserProfile } from '../../services/userProfileService';
+import { toast } from 'sonner';
 import { Avatar, AvatarFallback } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -33,7 +37,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../
 import { Progress } from '../../components/ui/progress';
 import { Separator } from '../../components/ui/separator';
 import { Screen, NavigationParams } from '../../App';
-import { toast } from 'sonner';
 
 interface Props {
   navigation: {
@@ -43,46 +46,110 @@ interface Props {
 }
 
 export default function ClinicianProfile({ navigation }: Props) {
+  const { user } = useAuth();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editedEmail, setEditedEmail] = useState('');
   const [editedPhone, setEditedPhone] = useState('');
+  const [editedFirstName, setEditedFirstName] = useState('');
+  const [editedLastName, setEditedLastName] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [stats, setStats] = useState({ totalPatients: 0, totalCharts: 0, pendingReview: 0 });
+  const [tenantInfo, setTenantInfo] = useState<any>(null);
 
-  const profileData = {
-    name: 'Dr. Sarah Johnson',
-    firstName: 'Sarah',
-    lastName: 'Johnson',
-    credentials: 'RN, BSN',
-    role: 'Registered Nurse',
-    pronouns: 'she/her',
-    email: 'sarah.johnson@healthcare.com',
-    phone: '(555) 123-4567',
-    address: '123 Medical Plaza, Healthcare City, HC 12345',
-    department: 'Home Health Services',
-    facility: 'Memorial Healthcare Network',
-    specialization: 'Geriatric Medicine',
-    certifications: ['WOCN Certified', 'Geriatrics Specialist'],
-    licenseNumber: 'RN-123456',
-    npiNumber: '1234567890',
-    yearsOfPractice: 8,
-    joinDate: 'January 15, 2024',
-    accountCreated: 'January 2025',
-    lastUpdated: 'Today at 2:03 PM',
-    totalPatients: 24,
-    totalCharts: 67,
-    verificationRate: 98,
-    isVerified: true,
+  useEffect(() => {
+    if (user?.id && user?.tenant_id) {
+      loadProfileData();
+    }
+  }, [user]);
+
+  const loadProfileData = async () => {
+    if (!user?.id || !user?.tenant_id) return;
+    
+    try {
+      setLoading(true);
+      const [profileData, statsData, tenant] = await Promise.all([
+        userProfileService.getUserProfile(user.id),
+        userProfileService.getUserStatistics(user.id, user.tenant_id),
+        userProfileService.getTenantInfo(user.tenant_id),
+      ]);
+      
+      setProfile(profileData);
+      setStats(statsData);
+      setTenantInfo(tenant);
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      toast.error('Failed to load profile data');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleEditProfile = () => {
-    setEditedEmail(profileData.email);
-    setEditedPhone(profileData.phone);
+    setEditedEmail(profile?.email || '');
+    setEditedPhone(profile?.phone_number || '');
+    setEditedFirstName(profile?.first_name || '');
+    setEditedLastName(profile?.last_name || '');
     setIsEditDialogOpen(true);
   };
 
-  const handleSaveProfile = () => {
-    // In real app, save to backend
-    toast.success('Profile updated successfully');
-    setIsEditDialogOpen(false);
+  const handleSaveProfile = async () => {
+    if (!user?.id) return;
+    
+    try {
+      setSaving(true);
+      await userProfileService.updateProfile(user.id, {
+        email: editedEmail,
+        phone_number: editedPhone,
+        first_name: editedFirstName,
+        last_name: editedLastName,
+      });
+      
+      toast.success('Profile updated successfully');
+      setIsEditDialogOpen(false);
+      loadProfileData();
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      toast.error('Failed to update profile');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#f8fafc]">
+        <Loader2 className="w-8 h-8 text-[#0966CC] animate-spin" />
+      </div>
+    );
+  }
+
+  const profileData = {
+    name: `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim() || 'Unknown User',
+    firstName: profile?.first_name || 'Unknown',
+    lastName: profile?.last_name || '',
+    credentials: profile?.occupation || 'RN, BSN',
+    role: profile?.role === 'clinician' ? 'Registered Nurse' : 'Healthcare Professional',
+    email: profile?.email || '',
+    phone: profile?.phone_number || 'Not provided',
+    address: profile?.address || 'Not provided',
+    totalPatients: stats.totalPatients,
+    totalCharts: stats.totalCharts,
+    verificationRate: 98,
+    isVerified: true,
+    accountCreated: profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Unknown',
+    lastUpdated: profile?.last_login ? new Date(profile.last_login).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric' }) : 'Never',
+    // Optional fields for display purposes
+    pronouns: '',
+    department: tenantInfo?.name || 'Home Health Services',
+    facility: tenantInfo?.name || 'Healthcare Network',
+    specialization: profile?.occupation || 'General Practice',
+    certifications: [],
+    licenseNumber: 'N/A',
+    npiNumber: tenantInfo?.npi_number || 'N/A',
+    yearsOfPractice: 0,
+    joinDate: profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Unknown',
   };
 
   return (
@@ -437,6 +504,28 @@ export default function ClinicianProfile({ navigation }: Props) {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-first-name">First Name</Label>
+                <Input
+                  id="edit-first-name"
+                  type="text"
+                  value={editedFirstName}
+                  onChange={(e) => setEditedFirstName(e.target.value)}
+                  className="h-11 rounded-xl"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-last-name">Last Name</Label>
+                <Input
+                  id="edit-last-name"
+                  type="text"
+                  value={editedLastName}
+                  onChange={(e) => setEditedLastName(e.target.value)}
+                  className="h-11 rounded-xl"
+                />
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="edit-email">Email</Label>
               <Input
@@ -455,15 +544,23 @@ export default function ClinicianProfile({ navigation }: Props) {
                 value={editedPhone}
                 onChange={(e) => setEditedPhone(e.target.value)}
                 className="h-11 rounded-xl"
+                placeholder="(555) 123-4567"
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={handleSaveProfile} className="bg-sky-600 hover:bg-sky-700">
-              Save Changes
+            <Button onClick={handleSaveProfile} className="bg-sky-600 hover:bg-sky-700" disabled={saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save Changes'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../context/AuthContext';
+import { userProfileService } from '../../services/userProfileService';
 import {
   Lock,
   User,
@@ -12,6 +14,8 @@ import {
   Info,
   AlertTriangle,
   Mail,
+  Shield,
+  Users,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -49,18 +53,23 @@ interface LoginSession {
 }
 
 export default function SchedulerSettings({ navigation, onNavigateToProfile }: Props) {
-  const [chartNotifications, setChartNotifications] = useState(true);
-  const [assignmentAlerts, setAssignmentAlerts] = useState(true);
-  const [emailNotifications, setEmailNotifications] = useState(true);
+  const { user } = useAuth();
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
   const [showMFADialog, setShowMFADialog] = useState(false);
   const [showDevicesDialog, setShowDevicesDialog] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: '',
   });
+
+  useEffect(() => {
+    if (user) {
+      setMfaEnabled(user.mfa_enabled || false);
+    }
+  }, [user]);
 
   const profileData = {
     lastPasswordChange: '45 days ago',
@@ -87,7 +96,9 @@ export default function SchedulerSettings({ navigation, onNavigateToProfile }: P
     },
   ];
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
+    if (!user?.id) return;
+    
     if (!passwordData.currentPassword || !passwordData.newPassword || !passwordData.confirmPassword) {
       toast.error('Please fill in all fields');
       return;
@@ -100,17 +111,38 @@ export default function SchedulerSettings({ navigation, onNavigateToProfile }: P
       toast.error('Password must be at least 8 characters');
       return;
     }
-    toast.success('Password changed successfully!');
-    setIsChangePasswordModalOpen(false);
-    setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    
+    try {
+      setSaving(true);
+      await userProfileService.changePassword(user.id, {
+        currentPassword: passwordData.currentPassword,
+        newPassword: passwordData.newPassword,
+      });
+      toast.success('Password changed successfully!');
+      setIsChangePasswordModalOpen(false);
+      setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    } catch (error: any) {
+      console.error('Error changing password:', error);
+      toast.error(error.message || 'Failed to change password');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleToggleMFA = (enabled: boolean) => {
-    setMfaEnabled(enabled);
-    if (enabled) {
-      setShowMFADialog(true);
-    } else {
-      toast.info('Two-factor authentication disabled');
+  const handleToggleMFA = async (enabled: boolean) => {
+    if (!user?.id) return;
+    
+    try {
+      if (enabled) {
+        setShowMFADialog(true);
+      } else {
+        await userProfileService.updateMFASettings(user.id, false);
+        setMfaEnabled(false);
+        toast.info('Two-factor authentication disabled');
+      }
+    } catch (error) {
+      console.error('Error toggling MFA:', error);
+      toast.error('Failed to update MFA settings');
     }
   };
 
@@ -244,65 +276,36 @@ export default function SchedulerSettings({ navigation, onNavigateToProfile }: P
           </Card>
         </div>
 
-        {/* Notifications */}
+        {/* App Information */}
         <div>
-          <h3 className="text-sm text-[#64748b] mb-3 px-2">NOTIFICATIONS</h3>
-          <div className="bg-white rounded-2xl border border-[#e2e8f0] overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b border-[#e2e8f0]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#FEF3C7] flex items-center justify-center">
-                  <Mail className="w-5 h-5 text-[#F59E0B]" />
-                </div>
-                <div>
-                  <p className="text-sm text-[#0f172a]">Email Notifications</p>
-                  <p className="text-xs text-[#64748b]">Receive email updates</p>
-                </div>
+          <h3 className="text-sm text-[#64748b] mb-3 px-2">APP INFORMATION</h3>
+          <Card className="p-5">
+            <div className="space-y-3 text-sm text-[#64748b]">
+              <div className="flex justify-between">
+                <span>Version</span>
+                <span className="text-[#0f172a] font-medium">1.0.0</span>
               </div>
-              <Switch
-                checked={emailNotifications}
-                onCheckedChange={setEmailNotifications}
-                className="data-[state=checked]:bg-[#F59E0B]"
-              />
-            </div>
-            <div className="flex items-center justify-between p-4 border-b border-[#e2e8f0]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#FEF3C7] flex items-center justify-center">
-                  <FileText className="w-5 h-5 text-[#F59E0B]" />
-                </div>
-                <div>
-                  <p className="text-sm text-[#0f172a]">Chart Notifications</p>
-                  <p className="text-xs text-[#64748b]">Chart status updates</p>
-                </div>
+              <Separator />
+              <div className="flex justify-between">
+                <span>Last Updated</span>
+                <span className="text-[#0f172a] font-medium">Nov 30, 2025</span>
               </div>
-              <Switch
-                checked={chartNotifications}
-                onCheckedChange={setChartNotifications}
-                className="data-[state=checked]:bg-[#F59E0B]"
-              />
-            </div>
-            <div className="flex items-center justify-between p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#E0F2FE] flex items-center justify-center">
-                  <Bell className="w-5 h-5 text-[#0966CC]" />
-                </div>
-                <div>
-                  <p className="text-sm text-[#0f172a]">Assignment Alerts</p>
-                  <p className="text-xs text-[#64748b]">New chart assignments</p>
-                </div>
+              <Separator />
+              <div className="flex items-center justify-between">
+                <span>Security Status</span>
+                <Badge variant="outline" className="border-emerald-600 text-emerald-600">
+                  <Shield className="w-3 h-3 mr-1" />
+                  HIPAA Compliant
+                </Badge>
               </div>
-              <Switch
-                checked={assignmentAlerts}
-                onCheckedChange={setAssignmentAlerts}
-                className="data-[state=checked]:bg-[#0966CC]"
-              />
             </div>
-          </div>
+          </Card>
         </div>
 
         {/* Info Card */}
         <Card className="p-4 bg-amber-50 border-amber-200">
           <div className="flex items-start gap-2">
-            <Info className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <Info className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
             <div className="text-xs text-amber-800">
               <p className="font-semibold mb-1">Need help with settings?</p>
               <p>Contact your agency administrator or visit our help center for assistance.</p>
@@ -363,15 +366,17 @@ export default function SchedulerSettings({ navigation, onNavigateToProfile }: P
                 setIsChangePasswordModalOpen(false);
                 setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
               }}
+              disabled={saving}
             >
               Cancel
             </Button>
             <Button
               onClick={handleChangePassword}
               className="bg-[#F59E0B] hover:bg-[#D97706] text-white"
+              disabled={saving}
             >
               <Lock className="w-4 h-4 mr-2" />
-              Change Password
+              {saving ? 'Changing...' : 'Change Password'}
             </Button>
           </DialogFooter>
         </DialogContent>

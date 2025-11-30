@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, User, Calendar as CalendarIcon, Phone, MapPin, FileText, ChevronRight, Check, Circle, Save, FileDown } from 'lucide-react';
+import { ArrowLeft, User, Calendar as CalendarIcon, Phone, MapPin, FileText, ChevronRight, Check, Circle, Save, FileDown, X } from 'lucide-react';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Button } from '../../components/ui/button';
@@ -8,6 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Screen, NavigationParams } from '../../App';
 import { supabaseClient } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
+import MedicationOCRScanner from '../../components/MedicationOCRScanner';
+import PDFScanner from '../../components/PDFScanner';
+import { PatientInfo, MedicationInfo } from '../../utils/ocrService';
 
 // US States list
 const US_STATES = [
@@ -32,6 +35,93 @@ const formatPhoneNumber = (value: string): string => {
   return value;
 };
 
+/**
+ * Convert date from MM/DD/YYYY to YYYY-MM-DD format for date input
+ */
+const convertDateToInputFormat = (dateStr: string): string => {
+  if (!dateStr) return '';
+  
+  // Check if already in YYYY-MM-DD format
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return dateStr;
+  }
+  
+  // Parse MM/DD/YYYY format
+  const match = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (match) {
+    let [_, month, day, year] = match;
+    
+    // Handle 2-digit years
+    if (year.length === 2) {
+      const yearNum = parseInt(year);
+      year = yearNum > 30 ? `19${year}` : `20${year}`;
+    }
+    
+    // Pad month and day with leading zeros
+    month = month.padStart(2, '0');
+    day = day.padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
+  }
+  
+  return '';
+};
+
+/**
+ * Parse a full address string into components
+ * Example: "1245 Evergreen Terrace, Mesa, AZ 85201" 
+ * Returns: { street, city, state, zip }
+ */
+function parseAddress(fullAddress: string): { street: string; city: string; state: string; zip: string } {
+  const result = { street: '', city: '', state: '', zip: '' };
+  
+  if (!fullAddress) return result;
+  
+  // Remove any "Phone:" or "MRN:" text that might have leaked in
+  const cleaned = fullAddress.replace(/(?:Phone|MRN|Medical\s+Record).*$/i, '').trim();
+  
+  // Try to match: "Street Address, City, ST ZIP"
+  const pattern = /^([^,]+),\s*([^,]+),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)?/;
+  const match = cleaned.match(pattern);
+  
+  if (match) {
+    result.street = match[1].trim();
+    result.city = match[2].trim();
+    result.state = match[3].trim();
+    result.zip = match[4] ? match[4].trim() : '';
+  } else {
+    // Fallback: try to extract ZIP from end
+    const zipMatch = cleaned.match(/\b(\d{5}(?:-\d{4})?)\s*$/);
+    if (zipMatch) {
+      result.zip = zipMatch[1];
+      const withoutZip = cleaned.substring(0, zipMatch.index).trim();
+      
+      // Try to extract state (2 letter code before ZIP)
+      const stateMatch = withoutZip.match(/\b([A-Z]{2})\s*,?\s*$/);
+      if (stateMatch) {
+        result.state = stateMatch[1];
+        const withoutState = withoutZip.substring(0, stateMatch.index).trim();
+        
+        // Remaining parts: try to split by comma
+        const parts = withoutState.split(',').map(p => p.trim());
+        if (parts.length >= 2) {
+          result.street = parts.slice(0, -1).join(', ');
+          result.city = parts[parts.length - 1];
+        } else {
+          result.street = withoutState;
+        }
+      } else {
+        result.street = withoutZip;
+      }
+    } else {
+      // No ZIP found, just use as street address
+      result.street = cleaned;
+    }
+  }
+  
+  return result;
+}
+
 interface Props {
   navigation: {
     navigate: (screen: Screen, params?: NavigationParams) => void;
@@ -46,24 +136,48 @@ export default function NewPatientChart({ navigation, route }: Props) {
   const prefillData = route?.params?.prefillData;
   const scannedMedications = route?.params?.scannedMedications;
   const scanType = route?.params?.scanType;
+  const existingAttachments = route?.params?.attachments || [];
+
+  // Parse address if provided
+  const parsedAddress = prefillData?.address ? parseAddress(prefillData.address) : { street: '', city: '', state: '', zip: '' };
 
   const [firstName, setFirstName] = useState(prefillData?.firstName || '');
   const [lastName, setLastName] = useState(prefillData?.lastName || '');
-  const [dob, setDob] = useState(prefillData?.dateOfBirth || '');
+  const [dob, setDob] = useState(prefillData?.dateOfBirth ? convertDateToInputFormat(prefillData.dateOfBirth) : '');
   const [medicalRecordNumber, setMedicalRecordNumber] = useState(prefillData?.medicalRecordNumber || '');
-  const [phone, setPhone] = useState('');
-  const [address1, setAddress1] = useState('');
+  const [phone, setPhone] = useState(prefillData?.phone ? formatPhoneNumber(prefillData.phone) : '');
+  const [address1, setAddress1] = useState(parsedAddress.street);
   const [address2, setAddress2] = useState('');
-  const [city, setCity] = useState('');
-  const [state, setState] = useState('');
-  const [zipCode, setZipCode] = useState('');
+  const [city, setCity] = useState(parsedAddress.city);
+  const [state, setState] = useState(parsedAddress.state);
+  const [zipCode, setZipCode] = useState(parsedAddress.zip);
   const [notes, setNotes] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [showScanBanner, setShowScanBanner] = useState(!!prefillData);
+  const [showPDFScanner, setShowPDFScanner] = useState(false);
+  const [scannedPDFMedications, setScannedPDFMedications] = useState<Partial<MedicationInfo>[]>([]);
+  const [scannedPDFFile, setScannedPDFFile] = useState<File | null>(null);
   
   const firstNameRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
+
+  // Auto-fill fields when prefillData is available
+  useEffect(() => {
+    if (prefillData) {
+      console.log('📋 Prefill data received:', prefillData);
+      if (prefillData.phone) {
+        const formattedPhone = formatPhoneNumber(prefillData.phone);
+        console.log('📞 Phone - Original:', prefillData.phone, '→ Formatted:', formattedPhone);
+        setPhone(formattedPhone);
+      }
+      if (prefillData.dateOfBirth) {
+        const formattedDob = convertDateToInputFormat(prefillData.dateOfBirth);
+        console.log('📅 DOB - Original:', prefillData.dateOfBirth, '→ Formatted:', formattedDob);
+        setDob(formattedDob);
+      }
+    }
+  }, [prefillData]);
 
   // Auto-focus first field on mount (unless pre-filled)
   useEffect(() => {
@@ -90,6 +204,12 @@ export default function NewPatientChart({ navigation, route }: Props) {
 
   const handleSaveAndContinue = () => {
     if (validateForm()) {
+      // Prepare attachments array - combine existing attachments with any new scanned PDF
+      const attachments: File[] = [...existingAttachments];
+      if (scannedPDFFile && !existingAttachments.includes(scannedPDFFile)) {
+        attachments.push(scannedPDFFile);
+      }
+      
       // In real app, save patient data to database
       // Pass patient data to next step
       navigation.navigate('NewPatientChartMedications', { 
@@ -107,10 +227,31 @@ export default function NewPatientChart({ navigation, route }: Props) {
           zip_code: zipCode,
           notes
         },
-        scannedMedications,
-        scanType
+        scannedMedications: scannedPDFMedications.length > 0 ? scannedPDFMedications : scannedMedications,
+        scanType,
+        attachments: attachments.length > 0 ? attachments : undefined
       });
     }
+  };
+
+  const handlePDFScanned = (medications: Partial<MedicationInfo>[], patientInfo?: PatientInfo, originalFile?: File) => {
+    // Autofill patient info from PDF
+    if (patientInfo) {
+      if (patientInfo.firstName) setFirstName(patientInfo.firstName);
+      if (patientInfo.lastName) setLastName(patientInfo.lastName);
+      if (patientInfo.dateOfBirth) setDob(patientInfo.dateOfBirth);
+      if (patientInfo.phone) setPhone(patientInfo.phone);
+      if (patientInfo.address) setAddress1(patientInfo.address);
+      if (patientInfo.medicalRecordNumber) setMedicalRecordNumber(patientInfo.medicalRecordNumber);
+      setShowScanBanner(true);
+    }
+    
+    // Store medications and original file to pass to next screen
+    setScannedPDFMedications(medications);
+    if (originalFile) {
+      setScannedPDFFile(originalFile);
+    }
+    setShowPDFScanner(false);
   };
 
   const handleSaveAsDraft = () => {
@@ -139,7 +280,14 @@ export default function NewPatientChart({ navigation, route }: Props) {
             <ArrowLeft className="w-5 h-5 text-white" />
           </button>
           <h1 className="text-lg text-white">New Patient Chart</h1>
-          <div className="w-10" />
+          <button
+            onClick={() => navigation.navigate('ClinicianDashboard')}
+            className="px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 flex items-center gap-2 transition-colors text-white text-sm font-medium"
+            aria-label="Exit to dashboard"
+          >
+            <X className="w-4 h-4" />
+            Exit
+          </button>
         </div>
       </div>
 
@@ -445,6 +593,19 @@ export default function NewPatientChart({ navigation, route }: Props) {
           )}
         </div>
       </div>
+
+      {/* PDF Scanner Modal */}
+      {showPDFScanner && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            <PDFScanner
+              onPDFScanned={handlePDFScanned}
+              onCancel={() => setShowPDFScanner(false)}
+              modal={true}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

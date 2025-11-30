@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../context/AuthContext';
+import { userProfileService } from '../../services/userProfileService';
 import {
   ArrowLeft,
   Bell,
@@ -42,21 +44,28 @@ interface Props {
 }
 
 export default function ClinicianSettings({ navigation }: Props) {
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [mfaEnabled, setMfaEnabled] = useState(true);
+  const { user } = useAuth();
+  const [mfaEnabled, setMfaEnabled] = useState(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [showMFADialog, setShowMFADialog] = useState(false);
   const [showDevicesDialog, setShowDevicesDialog] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: '',
   });
 
+  useEffect(() => {
+    if (user) {
+      setMfaEnabled(user.mfa_enabled || false);
+    }
+  }, [user]);
+
   const profileData = {
     lastPasswordChange: '30 days ago',
     lastLogin: 'Phoenix, AZ',
-    lastLoginTime: 'Today at 9:42 AM',
+    lastLoginTime: user?.last_login ? new Date(user.last_login).toLocaleString() : 'Never',
   };
 
   const loginSessions = [
@@ -86,7 +95,9 @@ export default function ClinicianSettings({ navigation }: Props) {
     },
   ];
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
+    if (!user?.id) return;
+    
     if (!passwordData.currentPassword || !passwordData.newPassword || !passwordData.confirmPassword) {
       toast.error('Please fill in all fields');
       return;
@@ -99,17 +110,38 @@ export default function ClinicianSettings({ navigation }: Props) {
       toast.error('Password must be at least 8 characters');
       return;
     }
-    toast.success('Password changed successfully!');
-    setShowPasswordDialog(false);
-    setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    
+    try {
+      setSaving(true);
+      await userProfileService.changePassword(user.id, {
+        currentPassword: passwordData.currentPassword,
+        newPassword: passwordData.newPassword,
+      });
+      toast.success('Password changed successfully!');
+      setShowPasswordDialog(false);
+      setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    } catch (error: any) {
+      console.error('Error changing password:', error);
+      toast.error(error.message || 'Failed to change password');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleToggleMFA = (enabled: boolean) => {
-    setMfaEnabled(enabled);
-    if (enabled) {
-      setShowMFADialog(true);
-    } else {
-      toast.info('Two-factor authentication disabled');
+  const handleToggleMFA = async (enabled: boolean) => {
+    if (!user?.id) return;
+    
+    try {
+      if (enabled) {
+        setShowMFADialog(true);
+      } else {
+        await userProfileService.updateMFASettings(user.id, false);
+        setMfaEnabled(false);
+        toast.info('Two-factor authentication disabled');
+      }
+    } catch (error) {
+      console.error('Error toggling MFA:', error);
+      toast.error('Failed to update MFA settings');
     }
   };
 
@@ -318,53 +350,6 @@ export default function ClinicianSettings({ navigation }: Props) {
             </div>
           </Card>
         </div>
-
-        {/* Notifications */}
-        <div>
-          <h3 className="text-sm text-[#64748b] mb-3 px-2">NOTIFICATIONS</h3>
-          <div className="bg-white rounded-2xl border border-[#e2e8f0] overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b border-[#e2e8f0]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#D1FAE5] flex items-center justify-center">
-                  <Mail className="w-5 h-5 text-[#10B981]" />
-                </div>
-                <div>
-                  <p className="text-sm text-[#0f172a]">Email Notifications</p>
-                  <p className="text-xs text-[#64748b]">Receive email updates</p>
-                </div>
-              </div>
-              <Switch className="data-[state=checked]:bg-[#10B981]" defaultChecked />
-            </div>
-            <div className="flex items-center justify-between p-4 border-b border-[#e2e8f0]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#FEF3C7] flex items-center justify-center">
-                  <Bell className="w-5 h-5 text-[#F59E0B]" />
-                </div>
-                <div>
-                  <p className="text-sm text-[#0f172a]">Push Notifications</p>
-                  <p className="text-xs text-[#64748b]">Receive app notifications</p>
-                </div>
-              </div>
-              <Switch 
-                checked={notificationsEnabled} 
-                onCheckedChange={setNotificationsEnabled}
-                className="data-[state=checked]:bg-[#10B981]" 
-              />
-            </div>
-            <div className="flex items-center justify-between p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#E0F2FE] flex items-center justify-center">
-                  <FileText className="w-5 h-5 text-[#0966CC]" />
-                </div>
-                <div>
-                  <p className="text-sm text-[#0f172a]">Chart Alerts</p>
-                  <p className="text-xs text-[#64748b]">Updates on your charts</p>
-                </div>
-              </div>
-              <Switch className="data-[state=checked]:bg-[#10B981]" defaultChecked />
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Change Password Dialog */}
@@ -413,14 +398,15 @@ export default function ClinicianSettings({ navigation }: Props) {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPasswordDialog(false)}>
+            <Button variant="outline" onClick={() => setShowPasswordDialog(false)} disabled={saving}>
               Cancel
             </Button>
             <Button
               className="bg-[#0966CC] hover:bg-[#075985]"
               onClick={handleChangePassword}
+              disabled={saving}
             >
-              Update Password
+              {saving ? 'Updating...' : 'Update Password'}
             </Button>
           </DialogFooter>
         </DialogContent>

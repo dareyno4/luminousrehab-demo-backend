@@ -235,6 +235,56 @@ export async function fetchClinicians(tenantId: string) {
   return cliniciansWithCounts as Clinician[];
 }
 
+// Find existing patient by name and DOB with their chart
+export async function findExistingPatientWithChart(
+  firstName: string,
+  lastName: string,
+  dateOfBirth: string,
+  tenantId: string
+) {
+  const { data, error } = await supabaseClient
+    .from('patients')
+    .select(`
+      *,
+      charts (
+        id,
+        status,
+        source,
+        created_at,
+        created_by,
+        medication_count
+      )
+    `)
+    .eq('tenant_id', tenantId)
+    .eq('first_name', firstName)
+    .eq('last_name', lastName)
+    .eq('date_of_birth', dateOfBirth)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data as (Patient & { charts?: any[] }) | null;
+}
+
+// Find existing patient by name and DOB
+export async function findExistingPatient(
+  firstName: string,
+  lastName: string,
+  dateOfBirth: string,
+  tenantId: string
+) {
+  const { data, error } = await supabaseClient
+    .from('patients')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('first_name', firstName)
+    .eq('last_name', lastName)
+    .eq('date_of_birth', dateOfBirth)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data as Patient | null;
+}
+
 // Create a new patient
 export async function createPatient(patientData: CreatePatientData, tenantId: string, createdBy: string) {
   const { data, error } = await supabaseClient
@@ -284,15 +334,72 @@ export async function createChart(chartData: CreateChartData, tenantId: string, 
 }
 
 // Create a patient and empty chart in one transaction
+// If patient already exists with a chart, returns existing chart
 export async function createPatientWithChart(
   patientData: CreatePatientData,
   tenantId: string,
   createdBy: string
 ) {
-  // First create the patient
-  const patient = await createPatient(patientData, tenantId, createdBy);
+  // Check if patient already exists with their charts
+  const existingPatientWithChart = await findExistingPatientWithChart(
+    patientData.first_name,
+    patientData.last_name,
+    patientData.date_of_birth,
+    tenantId
+  );
 
-  // Then create an empty chart for them
+  if (existingPatientWithChart && existingPatientWithChart.charts && existingPatientWithChart.charts.length > 0) {
+    // Patient already has a chart - return existing patient and chart
+    const existingChart = existingPatientWithChart.charts[0];
+    console.log(`Patient already has a chart: ${existingPatientWithChart.first_name} ${existingPatientWithChart.last_name} (Chart ID: ${existingChart.id})`);
+    
+    // Fetch full chart details
+    const { data: fullChart, error: chartError } = await supabaseClient
+      .from('charts')
+      .select(`
+        *,
+        patient:patients!charts_patient_id_fkey (
+          id,
+          first_name,
+          last_name,
+          date_of_birth,
+          address_line1,
+          address_line2,
+          city,
+          state,
+          zip_code,
+          phone,
+          email
+        )
+      `)
+      .eq('id', existingChart.id)
+      .single();
+
+    if (chartError) throw chartError;
+
+    return { 
+      patient: existingPatientWithChart as Patient, 
+      chart: fullChart as ChartWithPatient, 
+      isNewPatient: false,
+      existingChartFound: true
+    };
+  }
+
+  let patient: Patient;
+  let isNewPatient = false;
+
+  if (existingPatientWithChart) {
+    // Patient exists but has no chart yet
+    patient = existingPatientWithChart as Patient;
+    console.log(`Using existing patient (no chart): ${patient.first_name} ${patient.last_name} (ID: ${patient.id})`);
+  } else {
+    // Create new patient
+    patient = await createPatient(patientData, tenantId, createdBy);
+    isNewPatient = true;
+    console.log(`Created new patient: ${patient.first_name} ${patient.last_name} (ID: ${patient.id})`);
+  }
+
+  // Create the first chart for this patient
   const chart = await createChart(
     {
       patient_id: patient.id,
@@ -303,7 +410,7 @@ export async function createPatientWithChart(
     createdBy
   );
 
-  return { patient, chart };
+  return { patient, chart, isNewPatient, existingChartFound: false };
 }
 
 // Assign a chart to a clinician

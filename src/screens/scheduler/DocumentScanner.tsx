@@ -9,6 +9,9 @@ import {
   AlertCircle,
   Image as ImageIcon,
   ChevronRight,
+  HelpCircle,
+  CheckCircle2,
+  LightbulbIcon,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
@@ -42,6 +45,7 @@ export default function DocumentScanner({ chartId, onSuccess, onClose }: Props) 
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [charts, setCharts] = useState<Chart[]>([]);
   const [loadingCharts, setLoadingCharts] = useState(false);
+  const [showGuideModal, setShowGuideModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load charts if no chartId is provided (for patient selection)
@@ -187,11 +191,22 @@ export default function DocumentScanner({ chartId, onSuccess, onClose }: Props) 
             {chartId ? 'Add documents to this patient chart' : 'Upload documents to attach later'}
           </p>
         </div>
-        {onClose && (
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            <X className="w-4 h-4" />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowGuideModal(true)}
+            className="text-[#0966CC] border-[#0966CC]"
+          >
+            <HelpCircle className="w-4 h-4 mr-2" />
+            View Guide
           </Button>
-        )}
+          {onClose && (
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              <X className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Upload Options */}
@@ -368,6 +383,130 @@ export default function DocumentScanner({ chartId, onSuccess, onClose }: Props) 
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Scanning Guide Modal */}
+      <Dialog open={showGuideModal} onOpenChange={setShowGuideModal}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LightbulbIcon className="w-5 h-5 text-[#F59E0B]" />
+              Document Scanning Guide
+            </DialogTitle>
+            <DialogDescription>
+              Tips for getting the best scan results
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            {/* Best Practices */}
+            <div>
+              <h3 className="font-semibold text-sm text-slate-900 mb-3 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#10B981]" />
+                Best Practices
+              </h3>
+              <div className="space-y-3">
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Good Lighting</p>
+                  <p className="text-xs text-[#065F46]">Use natural light or bright indoor lighting. Avoid shadows and glare on the document.</p>
+                </div>
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Flat Surface</p>
+                  <p className="text-xs text-[#065F46]">Place the document on a flat, contrasting surface. Use a dark background for white paper.</p>
+                </div>
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Hold Steady</p>
+                  <p className="text-xs text-[#065F46]">Keep your device stable and parallel to the document. Use both hands or prop against a surface.</p>
+                </div>
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Full Document</p>
+                  <p className="text-xs text-[#065F46]">Capture the entire document in frame with all four edges visible. Leave a small margin.</p>
+                </div>
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Sharp Focus</p>
+                  <p className="text-xs text-[#065F46]">Ensure text is clear and readable. Tap screen to focus if needed before capturing.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Common Mistakes */}
+            <div>
+              <h3 className="font-semibold text-sm text-slate-900 mb-3 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-[#DC2626]" />
+                Avoid These Mistakes
+              </h3>
+              <div className="space-y-3">
+                <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-3">
+                  <p className="text-sm text-[#7F1D1D] font-medium mb-1">✗ Poor Lighting</p>
+                  <p className="text-xs text-[#7F1D1D]">Dark or shadowy photos make text hard to read and reduce accuracy.</p>
+                </div>
+                <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-3">
+                  <p className="text-sm text-[#7F1D1D] font-medium mb-1">✗ Blurry Images</p>
+                  <p className="text-xs text-[#7F1D1D]">Motion blur or out-of-focus shots won't process correctly. Retake if blurry.</p>
+                </div>
+                <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-3">
+                  <p className="text-sm text-[#7F1D1D] font-medium mb-1">✗ Cropped Text</p>
+                  <p className="text-xs text-[#7F1D1D]">Missing edges or cut-off text means important information may be lost.</p>
+                </div>
+                <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-3">
+                  <p className="text-sm text-[#7F1D1D] font-medium mb-1">✗ Glare/Reflections</p>
+                  <p className="text-xs text-[#7F1D1D]">Glossy surfaces or flash can create bright spots that obscure text.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Document Types */}
+            <div>
+              <h3 className="font-semibold text-sm text-slate-900 mb-3">Supported Document Types</h3>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Discharge Summaries</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Medical Records</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Insurance Cards</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Lab Results</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Prescriptions</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Referral Forms</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Tips */}
+            <div className="bg-[#FEF3C7] border border-[#FDE68A] rounded-lg p-4">
+              <h3 className="font-semibold text-sm text-[#92400E] mb-2">💡 Pro Tips</h3>
+              <ul className="space-y-1 text-xs text-[#92400E]">
+                <li>• For multi-page documents, scan each page separately</li>
+                <li>• PDFs are best for already-digital documents</li>
+                <li>• Use the file upload option for documents on your computer</li>
+                <li>• Camera scan works best for physical paper documents</li>
+              </ul>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              onClick={() => setShowGuideModal(false)}
+              className="bg-[#0966CC] hover:bg-[#075497] text-white"
+            >
+              Got It
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

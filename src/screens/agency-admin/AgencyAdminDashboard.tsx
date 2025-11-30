@@ -98,12 +98,15 @@ import {
 } from '../../components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip';
 import { Checkbox } from '../../components/ui/checkbox';
+import NotificationCenter from '../../components/NotificationCenter';
+import { notificationService } from '../../services/notificationService';
 import { Textarea } from '../../components/ui/textarea';
 import { Screen, NavigationParams } from '../../App';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
 import { Toaster } from '../../components/ui/sonner';
 import { motion } from 'motion/react';
+import jsPDF from 'jspdf';
 import ClinicianDetailView from './ClinicianDetailView';
 import AgencyPatientsView from './AgencyPatientsView';
 import AgencyUsersView from './AgencyUsersView';
@@ -602,8 +605,147 @@ export default function AgencyAdminDashboard({ navigation }: Props) {
     setSelectedChartId(null);
   };
 
-  const handleDownloadPDF = (chartId: string) => {
-    toast.success('PDF download started');
+  const handleDownloadPDF = async (chartId: string) => {
+    try {
+      // Find the chart
+      const chart = transformedCharts.find(c => c.id === chartId);
+      if (!chart) {
+        toast.error('Chart not found');
+        return;
+      }
+
+      // Fetch chart details with medications from database
+      const { supabaseClient } = await import('../../lib/supabase');
+      
+      const { data: medications, error: medsError } = await supabaseClient
+        .from('medications')
+        .select('*')
+        .eq('chart_id', chartId)
+        .order('created_at', { ascending: true });
+
+      if (medsError) {
+        console.error('Error fetching medications:', medsError);
+        toast.error('Failed to load medications');
+        return;
+      }
+
+      // Generate PDF
+      const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+
+      // Layout constants
+      const margin = 48;
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const innerW = pageW - margin * 2;
+      let y = margin;
+
+      const ensureSpace = (needed: number) => {
+        if (y + needed > pageH - margin) {
+          doc.addPage();
+          y = margin;
+        }
+      };
+
+      // Header
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(20);
+      doc.text('Patient Medication Chart', margin, y); y += 30;
+
+      // Patient Info
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.text(`Patient: ${chart.patientName}`, margin, y); y += 16;
+      doc.text(`DOB: ${chart.patientDob || 'N/A'}`, margin, y); y += 16;
+      doc.text(`Chart ID: ${chartId}`, margin, y); y += 16;
+      doc.text(`Status: ${chart.status}`, margin, y); y += 16;
+      doc.text(`Created: ${chart.createdDate}`, margin, y); y += 16;
+      doc.text(`Created By: ${chart.createdBy}`, margin, y); y += 16;
+      const genAt = new Date().toLocaleString();
+      doc.text(`Generated: ${genAt}`, margin, y); y += 24;
+
+      // Medications table header
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      ensureSpace(24);
+      doc.text('Medications', margin, y); y += 12;
+
+      // Table columns
+      const cols = [
+        { key: 'drug_name', label: 'Drug', w: 140 },
+        { key: 'strength', label: 'Strength', w: 80 },
+        { key: 'route', label: 'Route', w: 60 },
+        { key: 'frequency', label: 'Frequency', w: 80 },
+        { key: 'prescriber', label: 'Prescriber', w: 90 },
+        { key: 'created_at', label: 'Date', w: 70 },
+      ];
+
+      // Header row
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      ensureSpace(20);
+      let xPos = margin;
+      cols.forEach(col => {
+        doc.text(col.label, xPos + 3, y);
+        xPos += col.w;
+      });
+      y += 14;
+
+      // Draw header line
+      doc.setLineWidth(1);
+      doc.line(margin, y - 12, margin + innerW, y - 12);
+
+      // Table rows
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      const rowLineH = 10;
+
+      (medications || []).forEach((med: any) => {
+        const cells = [
+          String(med.drug_name || ''),
+          String(med.strength || ''),
+          String(med.route || ''),
+          String(med.frequency || ''),
+          String(med.prescriber || ''),
+          med.created_at ? new Date(med.created_at).toLocaleDateString() : '',
+        ];
+
+        const linesPerCell = cells.map((text, i) => doc.splitTextToSize(text, cols[i].w - 6));
+        const maxLines = Math.max(...linesPerCell.map((ln) => Array.isArray(ln) ? ln.length : 1));
+        const rowH = Math.max(rowLineH, maxLines * rowLineH);
+        ensureSpace(rowH + 4);
+
+        xPos = margin;
+        linesPerCell.forEach((lines, i) => {
+          const textLines = Array.isArray(lines) ? lines : [lines];
+          textLines.forEach((line, lineIdx) => {
+            doc.text(line, xPos + 3, y + 10 + lineIdx * rowLineH);
+          });
+          xPos += cols[i].w;
+        });
+
+        y += rowH;
+        doc.setLineWidth(0.5);
+        doc.line(margin, y, margin + innerW, y);
+        y += 4;
+      });
+
+      // Footer
+      ensureSpace(30);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'italic');
+      doc.text(
+        `This document contains ${medications?.length || 0} medication(s) for ${chart.patientName}.`,
+        margin,
+        y + 20
+      );
+
+      // Download
+      doc.save(`chart-${chartId}-${chart.patientName.replace(/\s+/g, '-')}.pdf`);
+      toast.success('PDF downloaded successfully');
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast.error('Failed to generate PDF');
+    }
   };
 
   const handleViewAuditLog = (chartId: string) => {
@@ -2630,12 +2772,53 @@ export default function AgencyAdminDashboard({ navigation }: Props) {
                 )}
               </div>
 
-              <button className="w-10 h-10 rounded-xl bg-[#f8fafc] hover:bg-[#f1f5f9] flex items-center justify-center relative transition-colors">
-                <Bell className="w-5 h-5 text-[#64748b]" />
-                {pendingReview > 0 && (
-                  <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#F59E0B] border-2 border-white" />
-                )}
-              </button>
+              {/* Test Notification Button - Remove after testing */}
+              <Button
+                onClick={async () => {
+                  if (!user?.id) {
+                    toast.error('User not logged in');
+                    return;
+                  }
+                  
+                  try {
+                    await notificationService.createNotification(
+                      user.id,
+                      'agency_admin',
+                      'chart_submitted',
+                      '📥 New Chart for Review',
+                      'Dr. Sarah Johnson submitted a chart for patient Emily Davis.',
+                      'high',
+                      { chartId: '456', clinicianName: 'Dr. Sarah Johnson', patientName: 'Emily Davis' },
+                      '/admin/charts/456',
+                      'Review Chart'
+                    );
+                    toast.success('Test notification created! Check the bell icon.');
+                  } catch (error) {
+                    console.error('Failed to create notification:', error);
+                    toast.error('Failed to create notification');
+                  }
+                }}
+                variant="outline"
+                size="sm"
+                className="text-xs border-purple-300 text-purple-600 hover:bg-purple-50"
+              >
+                🧪 Test Notification
+              </Button>
+
+              <NotificationCenter 
+                userId={user?.id || ''}
+                userRole="agency_admin"
+                onNavigate={(url) => {
+                  // Handle navigation based on URL
+                  if (url.includes('/charts')) {
+                    setActiveTab('charts');
+                  } else if (url.includes('/patients')) {
+                    setActiveTab('patients');
+                  } else if (url.includes('/clinicians')) {
+                    setActiveTab('clinicians');
+                  }
+                }}
+              />
             </div>
           </div>
         </header>

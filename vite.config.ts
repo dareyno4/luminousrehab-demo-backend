@@ -6,17 +6,9 @@ import { writeFileSync } from 'fs';
 
 
 export default defineConfig({
-  plugins: [
-    react(),
-    {
-      name: 'create-nojekyll',
-      closeBundle() {
-        writeFileSync('build/.nojekyll', '');
-      }
-    }
-  ],
+  plugins: [react()],
     envPrefix: 'VITE_',
-    base: '/luminousrehab-demo/', // Add this for GitHub Pages
+    base: '/',
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
       alias: {

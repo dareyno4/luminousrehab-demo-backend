@@ -30,6 +30,8 @@ export default function NewPatientChartComplete({ navigation, route }: Props) {
 
   const chartId = route.params?.chartId;
   const patientId = route.params?.patientId;
+  const isNewPatient = route.params?.isNewPatient ?? true; // Default to true if not provided
+  const existingChartFound = route.params?.existingChartFound ?? false;
 
   const handleGoToDashboard = () => {
     navigation.navigate('ClinicianDashboard');
@@ -95,11 +97,13 @@ export default function NewPatientChartComplete({ navigation, route }: Props) {
             </div>
 
             <h2 className="text-3xl text-slate-900 font-semibold mt-8 mb-3 text-center">
-              Patient Chart Created!
+              {isNewPatient ? 'Patient Chart Created!' : 'New Chart Added!'}
             </h2>
             <p className="text-slate-600 text-center max-w-md">
-              Successfully created patient chart. You can now add medications through scanning
-              or continue to the dashboard.
+              {isNewPatient 
+                ? 'Successfully created patient chart. You can now add medications through scanning or continue to the dashboard.'
+                : 'Successfully created a new chart for this existing patient. You can now add medications through scanning or continue to the dashboard.'
+              }
             </p>
           </div>
 
@@ -117,7 +121,7 @@ export default function NewPatientChartComplete({ navigation, route }: Props) {
                 </div>
                 <div className="flex-1">
                   <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">
-                    Patient Created
+                    {isNewPatient ? 'Patient Created' : 'Patient (Existing)'}
                   </p>
                   <p className="text-slate-900 font-medium">
                     {patient.first_name} {patient.last_name}

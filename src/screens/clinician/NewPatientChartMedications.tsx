@@ -56,7 +56,8 @@ export default function NewPatientChartMedications({ navigation, route }: Props)
   const [medRoute, setMedRoute] = useState('');
 
 
-  const [attachments, setAttachments] = useState<File[]>([]);
+  // Initialize attachments from route params (preserves PDF from previous screen)
+  const [attachments, setAttachments] = useState<File[]>(route?.params?.attachments || []);
 
   const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   if (e.target.files) {
@@ -182,7 +183,14 @@ export default function NewPatientChartMedications({ navigation, route }: Props)
             <ArrowLeft className="w-5 h-5 text-white" />
           </button>
           <h1 className="text-lg text-white">New Patient Chart</h1>
-          <div className="w-10" />
+          <button
+            onClick={() => navigation.navigate('ClinicianDashboard')}
+            className="px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 flex items-center gap-2 transition-colors text-white text-sm font-medium"
+            aria-label="Exit to dashboard"
+          >
+            <X className="w-4 h-4" />
+            Exit
+          </button>
         </div>
       </div>
 

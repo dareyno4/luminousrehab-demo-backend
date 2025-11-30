@@ -14,11 +14,20 @@ import {
   AlertCircle,
   Eye,
   RefreshCw,
+  X,
+  Download,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
 import {
   Tooltip,
   TooltipContent,
@@ -27,6 +36,8 @@ import {
 } from '../../components/ui/tooltip';
 import { toast } from 'sonner';
 import { fetchClinicianDetails } from '../../services/agencyAdminService';
+import { supabaseClient } from '../../lib/supabase';
+import jsPDF from 'jspdf';
 
 interface Patient {
   id: string;
@@ -83,6 +94,11 @@ export default function ClinicianDetailView({ clinicianId, onBack, navigation }:
     verified_count: 0,
     active_patient_count: 0,
   });
+  
+  // Patient detail modal state
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [patientCharts, setPatientCharts] = useState<any[]>([]);
+  const [loadingPatientDetails, setLoadingPatientDetails] = useState(false);
 
   useEffect(() => {
     loadClinicianDetails();
@@ -133,6 +149,101 @@ export default function ClinicianDetailView({ clinicianId, onBack, navigation }:
     return status.split('_').map(word => 
       word.charAt(0).toUpperCase() + word.slice(1)
     ).join(' ');
+  };
+
+  const handleViewPatient = async (patient: Patient) => {
+    setSelectedPatient(patient);
+    setLoadingPatientDetails(true);
+    
+    try {
+      // Fetch charts for this patient
+      const { data: chartsData, error } = await supabaseClient
+        .from('charts')
+        .select(`
+          id,
+          status,
+          source,
+          created_at,
+          finalized_at,
+          medications (count)
+        `)
+        .eq('patient_id', patient.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Transform the data to include medication count
+      const transformedCharts = await Promise.all(
+        (chartsData || []).map(async (chart: any) => {
+          const { count: medicationCount } = await supabaseClient
+            .from('medications')
+            .select('*', { count: 'exact', head: true })
+            .eq('chart_id', chart.id);
+
+          return {
+            ...chart,
+            medication_count: medicationCount || 0,
+          };
+        })
+      );
+
+      setPatientCharts(transformedCharts);
+    } catch (error) {
+      console.error('Error loading patient charts:', error);
+      toast.error('Failed to load patient charts');
+    } finally {
+      setLoadingPatientDetails(false);
+    }
+  };
+
+  const handleDownloadPatientPDF = async () => {
+    if (!selectedPatient) return;
+
+    try {
+      const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+      const margin = 48;
+      const pageW = doc.internal.pageSize.getWidth();
+      let y = margin;
+
+      // Header
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(20);
+      doc.text('Patient Information', margin, y); y += 30;
+
+      // Patient Details
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.text(`Name: ${selectedPatient.first_name} ${selectedPatient.last_name}`, margin, y); y += 16;
+      doc.text(`Date of Birth: ${selectedPatient.date_of_birth ? new Date(selectedPatient.date_of_birth).toLocaleDateString() : 'N/A'}`, margin, y); y += 16;
+      doc.text(`Phone: ${selectedPatient.phone_number || 'N/A'}`, margin, y); y += 16;
+      doc.text(`Address: ${formatAddress(selectedPatient)}`, margin, y); y += 16;
+      doc.text(`Total Charts: ${patientCharts.length}`, margin, y); y += 30;
+
+      // Charts Section
+      if (patientCharts.length > 0) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(13);
+        doc.text('Charts', margin, y); y += 20;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+
+        patientCharts.forEach((chart, index) => {
+          doc.text(`${index + 1}. ${formatStatus(chart.status)} - ${chart.medication_count} medications`, margin + 10, y); y += 14;
+          doc.text(`   Created: ${new Date(chart.created_at).toLocaleDateString()}`, margin + 10, y); y += 14;
+          if (chart.finalized_at) {
+            doc.text(`   Finalized: ${new Date(chart.finalized_at).toLocaleDateString()}`, margin + 10, y); y += 14;
+          }
+          y += 8;
+        });
+      }
+
+      doc.save(`patient-${selectedPatient.first_name}-${selectedPatient.last_name}.pdf`);
+      toast.success('PDF downloaded successfully');
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast.error('Failed to generate PDF');
+    }
   };
 
   if (loading) {
@@ -359,7 +470,7 @@ export default function ClinicianDetailView({ clinicianId, onBack, navigation }:
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => toast.info('Patient detail view coming soon')}
+                    onClick={() => handleViewPatient(patient)}
                     className="border-[#10B981] text-[#10B981] hover:bg-[#D1FAE5]"
                   >
                     <Eye className="w-4 h-4 mr-2" />
@@ -436,6 +547,130 @@ export default function ClinicianDetailView({ clinicianId, onBack, navigation }:
           )}
         </div>
       )}
+      
+      {/* Patient Detail Modal */}
+      <Dialog open={!!selectedPatient} onOpenChange={() => setSelectedPatient(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl">
+              {selectedPatient?.first_name} {selectedPatient?.last_name}
+            </DialogTitle>
+            <DialogDescription>
+              Patient information and chart history
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedPatient && (
+            <div className="space-y-6">
+              {/* Patient Information */}
+              <div className="bg-slate-50 rounded-lg p-4">
+                <h3 className="font-semibold text-sm text-slate-700 mb-3">Patient Information</h3>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-slate-500 text-xs">Date of Birth</p>
+                    <p className="text-slate-900 font-medium">
+                      {selectedPatient.date_of_birth 
+                        ? new Date(selectedPatient.date_of_birth).toLocaleDateString() 
+                        : 'N/A'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Phone</p>
+                    <p className="text-slate-900 font-medium">{selectedPatient.phone_number || 'N/A'}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-slate-500 text-xs">Address</p>
+                    <p className="text-slate-900 font-medium">{formatAddress(selectedPatient)}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Total Charts</p>
+                    <p className="text-slate-900 font-medium">{patientCharts.length}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Last Chart</p>
+                    <p className="text-slate-900 font-medium">
+                      {selectedPatient.last_chart_date 
+                        ? new Date(selectedPatient.last_chart_date).toLocaleDateString() 
+                        : 'N/A'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Charts List */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-sm text-slate-700">Charts ({patientCharts.length})</h3>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadPatientPDF}
+                    className="text-xs"
+                  >
+                    <Download className="w-3 h-3 mr-1" />
+                    Export PDF
+                  </Button>
+                </div>
+
+                {loadingPatientDetails ? (
+                  <div className="flex items-center justify-center py-8">
+                    <RefreshCw className="w-6 h-6 animate-spin text-[#10B981]" />
+                  </div>
+                ) : patientCharts.length === 0 ? (
+                  <div className="bg-slate-50 rounded-lg p-8 text-center">
+                    <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    <p className="text-sm text-slate-500">No charts found</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {patientCharts.map((chart: any) => (
+                      <Card key={chart.id} className="p-4 hover:shadow-md transition-shadow">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Badge className={getStatusBadgeClass(chart.status)}>
+                                {formatStatus(chart.status)}
+                              </Badge>
+                              <span className="text-xs text-slate-500">
+                                {chart.medication_count} medication{chart.medication_count !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            <div className="text-sm text-slate-600 space-y-1">
+                              <div className="flex items-center gap-2">
+                                <Calendar className="w-3 h-3" />
+                                <span>Created: {new Date(chart.created_at).toLocaleDateString()}</span>
+                              </div>
+                              {chart.finalized_at && (
+                                <div className="flex items-center gap-2">
+                                  <CheckCircle2 className="w-3 h-3 text-[#10B981]" />
+                                  <span>Finalized: {new Date(chart.finalized_at).toLocaleDateString()}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedPatient(null);
+                              // Navigate to chart detail if navigation is available
+                              navigation?.navigate?.('ChartDetailView', { chartId: chart.id });
+                            }}
+                            className="text-xs"
+                          >
+                            <Eye className="w-3 h-3 mr-1" />
+                            View Chart
+                          </Button>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

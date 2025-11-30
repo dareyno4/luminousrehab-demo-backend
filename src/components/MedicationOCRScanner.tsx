@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Upload, X, CheckCircle, AlertCircle, Loader2, FileText, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { Button } from '../components/ui/button';
@@ -8,20 +7,21 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
 import { useOCR } from '../hooks/useOCR';
-import { MedicationInfo } from '../utils/ocrService';
+import { MedicationInfo, PatientInfo } from '../utils/ocrService';
 
 interface Props {
-  onMedicationsScanned: (medications: Partial<MedicationInfo>[]) => void;
+  onMedicationsScanned: (medications: Partial<MedicationInfo>[], patientInfo?: PatientInfo, originalFile?: File) => void;
   onCancel: () => void;
   modal?: boolean;
 }
 
 export default function MedicationOCRScanner({ onMedicationsScanned, onCancel, modal = false }: Props) {
-  const { isProcessing, error, medications, ocrResult, scanImage, scanFromCamera, reset } = useOCR();
+  const { isProcessing, error, medications, patientInfo, ocrResult, scanImage, scanFromCamera, reset } = useOCR();
   const [preview, setPreview] = useState<string | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(true);
   const [annotations, setAnnotations] = useState<Array<{ searchText: string; color: string; field: string }>>([]);
   const [highlightBoxes, setHighlightBoxes] = useState<Array<{ bbox: { x0: number; y0: number; x1: number; y1: number }; color: string }>>([]);
+  const [originalFile, setOriginalFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -76,6 +76,9 @@ export default function MedicationOCRScanner({ onMedicationsScanned, onCancel, m
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Store original file
+    setOriginalFile(file);
+    
     // Scan the image
     await scanImage(file);
   };
@@ -95,7 +98,7 @@ export default function MedicationOCRScanner({ onMedicationsScanned, onCancel, m
         ...med,
         image: preview || undefined,
       }));
-      onMedicationsScanned(medsWithImage);
+      onMedicationsScanned(medsWithImage, patientInfo || undefined, originalFile || undefined);
     }
   };
 
@@ -104,6 +107,7 @@ export default function MedicationOCRScanner({ onMedicationsScanned, onCancel, m
     setPreview(null);
     setAnnotations([]);
     setHighlightBoxes([]);
+    setOriginalFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -161,9 +165,9 @@ export default function MedicationOCRScanner({ onMedicationsScanned, onCancel, m
                   <div className="w-20 h-20 rounded-2xl bg-[#D1FAE5] flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
                     <Upload className="w-10 h-10 text-[#10B981]" />
                   </div>
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Upload Image</h3>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Upload File</h3>
                   <p className="text-sm text-slate-600">
-                    Choose an existing photo from your device
+                    Choose a photo or PDF from your device
                   </p>
                 </div>
               </Card>
@@ -174,7 +178,7 @@ export default function MedicationOCRScanner({ onMedicationsScanned, onCancel, m
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,application/pdf"
             onChange={handleFileSelect}
             className="hidden"
           />
@@ -202,7 +206,7 @@ export default function MedicationOCRScanner({ onMedicationsScanned, onCancel, m
 
           {/* Preview and Results */}
           {preview && !isProcessing && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Image Preview */}
               <Card className="p-4">
                 <div className="flex items-center justify-between mb-3">
@@ -238,13 +242,13 @@ export default function MedicationOCRScanner({ onMedicationsScanned, onCancel, m
                   )}
                 </div>
                 
-                {/* Image with HTML Overlay */}
-                <div className="relative w-full rounded-lg border border-slate-200 overflow-hidden bg-slate-50">
+                {/* Image with HTML Overlay - Fixed dimensions */}
+                <div className="relative w-full max-h-[60vh] rounded-lg border border-slate-200 overflow-hidden bg-slate-50">
                   {/* Base Image */}
                   <img
                     src={preview}
                     alt="Scanned medication"
-                    className="w-full h-auto block"
+                    className="w-full h-auto max-h-[60vh] object-contain block"
                   />
                   
                   {/* Highlight Overlays */}

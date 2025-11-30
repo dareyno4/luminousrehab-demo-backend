@@ -4,19 +4,11 @@ import {
   Search,
   Filter,
   SortAsc,
-  CheckSquare,
-  Square,
-  Download,
-  Mail,
-  Printer,
-  Archive,
-  MoreVertical,
   ChevronRight,
   FileText,
   X,
   Plus,
   FileUp,
-  ClipboardCheck,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
@@ -29,19 +21,22 @@ import {
   Camera,
   Scan,
   Upload,
+  Archive,
 } from 'lucide-react';
 import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
-import { Checkbox } from '../../components/ui/checkbox';
 import { Avatar, AvatarFallback } from '../../components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '../../components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../../components/ui/sheet';
 import { Screen, NavigationParams } from '../../App';
 import { toast } from 'sonner';
 import { useAuth } from '../../context/AuthContext';
 import { fetchPatientsForClinician } from '../../services/patientService';
+import MedicationBarcodeScanner, { ScannedMedication } from '../../components/MedicationBarcodeScanner';
+import MedicationOCRScanner from '../../components/MedicationOCRScanner';
+import PatientSelectionModal from '../../components/PatientSelectionModal';
 
 
 interface Props {
@@ -69,6 +64,13 @@ interface Chart {
   createdDate: string;
   createdBy: string;
   finalizedDate?: string;
+}
+
+interface MedicationInfo {
+  name: string;
+  dosage: string;
+  frequency: string;
+  route: string;
 }
 
 const mapChartStatus = (status: string): Chart['status'] => {
@@ -112,8 +114,6 @@ export default function PatientChartList({ navigation }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
-  const [selectedCharts, setSelectedCharts] = useState<Set<string>>(new Set());
-  const [isSelectionMode, setIsSelectionMode] = useState(false);
   
   // Quick filter chips
   const [quickFilterChips, setQuickFilterChips] = useState<FilterStatus[]>([]);
@@ -127,6 +127,14 @@ export default function PatientChartList({ navigation }: Props) {
   
   // Scan sheet
   const [isScanSheetOpen, setIsScanSheetOpen] = useState(false);
+  
+  // Scanner states
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+  const [showOCRScanner, setShowOCRScanner] = useState(false);
+  const [scannedMedications, setScannedMedications] = useState<ScannedMedication[]>([]);
+  const [showPatientSelection, setShowPatientSelection] = useState(false);
+  const [scannedForSelection, setScannedForSelection] = useState<Partial<MedicationInfo>[]>([]);
+  const [scanTypeForSelection, setScanTypeForSelection] = useState<string>('');
 
   // Toggle quick filter chip
   const toggleQuickFilterChip = (status: FilterStatus) => {
@@ -149,9 +157,18 @@ export default function PatientChartList({ navigation }: Props) {
   };
 
   // Handle scan option
-  const handleScanOption = (scanType: string) => {
+  const handleScanOption = (scanType: 'Barcode Scan' | 'Bottle OCR' | 'Import PDF') => {
     setIsScanSheetOpen(false);
-    toast.info(`${scanType} feature coming soon`);
+    setScanTypeForSelection(scanType);
+    
+    if (scanType === 'Barcode Scan') {
+      setShowBarcodeScanner(true);
+    } else if (scanType === 'Bottle OCR') {
+      setShowOCRScanner(true);
+    } else if (scanType === 'Import PDF') {
+      // Navigate to ClinicianDashboard to open PDF scanner
+      navigation.navigate('ClinicianDashboard', { openPDFScanner: true });
+    }
   };
 
     useEffect(() => {
@@ -263,50 +280,8 @@ export default function PatientChartList({ navigation }: Props) {
 
   const allCharts = getAllChartsWithPatients();
 
-  const handleToggleChart = (chartKey: string) => {
-    const newSelected = new Set(selectedCharts);
-    if (newSelected.has(chartKey)) {
-      newSelected.delete(chartKey);
-    } else {
-      newSelected.add(chartKey);
-    }
-    setSelectedCharts(newSelected);
-  };
-
-  const handleSelectAll = () => {
-    if (selectedCharts.size === allCharts.length) {
-      setSelectedCharts(new Set());
-    } else {
-      setSelectedCharts(new Set(allCharts.map(item => item.chartKey)));
-    }
-  };
-
-  const handleCancelSelection = () => {
-    setIsSelectionMode(false);
-    setSelectedCharts(new Set());
-  };
-
-  const handleBatchExport = () => {
-    alert(`Exporting ${selectedCharts.size} charts to PDF...`);
-    handleCancelSelection();
-  };
-
-  const handleBatchEmail = () => {
-    alert(`Preparing to email ${selectedCharts.size} charts...`);
-    handleCancelSelection();
-  };
-
-  const handleBatchArchive = () => {
-    if (confirm(`Are you sure you want to archive ${selectedCharts.size} charts?`)) {
-      alert(`Archived ${selectedCharts.size} charts`);
-      handleCancelSelection();
-    }
-  };
-
   const handleSelectChart = (patientId: string, chartId: string) => {
-    if (!isSelectionMode) {
-      navigation.navigate('ChartDetail', { patientId, chartId });
-    }
+    navigation.navigate('ChartDetail', { patientId, chartId });
   };
 
   return (
@@ -324,54 +299,6 @@ export default function PatientChartList({ navigation }: Props) {
           <div className="w-10" />
         </div>
       </div>
-
-      {/* Batch Action Bar */}
-      {isSelectionMode && (
-        <div className="bg-gradient-to-r from-[#0966CC] to-[#0C4A6E] px-6 py-4 shadow-lg">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={handleCancelSelection}
-                className="text-white hover:text-white/80 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <span className="text-white">
-                {selectedCharts.size} selected
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={handleBatchExport}
-                disabled={selectedCharts.size === 0}
-                size="sm"
-                className="bg-white/10 border-0 text-white hover:bg-white/20 backdrop-blur-sm"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Export
-              </Button>
-              <Button
-                onClick={handleBatchEmail}
-                disabled={selectedCharts.size === 0}
-                size="sm"
-                className="bg-white/10 border-0 text-white hover:bg-white/20 backdrop-blur-sm"
-              >
-                <Mail className="w-4 h-4 mr-2" />
-                Email
-              </Button>
-              <Button
-                onClick={handleBatchArchive}
-                disabled={selectedCharts.size === 0}
-                size="sm"
-                className="bg-white/10 border-0 text-white hover:bg-white/20 backdrop-blur-sm"
-              >
-                <Archive className="w-4 h-4 mr-2" />
-                Archive
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
@@ -466,7 +393,7 @@ export default function PatientChartList({ navigation }: Props) {
               </div>
             </div>
 
-            {/* Sync Status & Select Button */}
+            {/* Sync Status */}
             <div className="flex items-center gap-3">
               {syncStatus === 'synced' ? (
                 <div className="flex items-center gap-1.5 text-emerald-700 text-sm">
@@ -484,24 +411,6 @@ export default function PatientChartList({ navigation }: Props) {
                   <span>Offline • 3 pending</span>
                 </div>
               )}
-              
-              <Button
-                onClick={() => setIsSelectionMode(!isSelectionMode)}
-                variant={isSelectionMode ? 'default' : 'outline'}
-                className={isSelectionMode ? 'bg-[#0966CC] hover:bg-[#0C4A6E] text-white' : ''}
-              >
-                {isSelectionMode ? (
-                  <>
-                    <X className="w-4 h-4 mr-2" />
-                    Cancel
-                  </>
-                ) : (
-                  <>
-                    <CheckSquare className="w-4 h-4 mr-2" />
-                    Select
-                  </>
-                )}
-              </Button>
             </div>
           </div>
 
@@ -523,20 +432,12 @@ export default function PatientChartList({ navigation }: Props) {
               Scan
             </Button>
             <Button
-              onClick={() => handleScanOption('Import PDF')}
+              onClick={() => navigation.navigate('ClinicianDashboard', { openPDFScanner: true })}
               variant="outline"
               className="border-amber-200 text-amber-700 hover:bg-amber-50 shadow-sm"
             >
               <FileUp className="w-4 h-4 mr-2" />
               Import PDF
-            </Button>
-            <Button
-              onClick={() => toast.info('Bulk review feature coming soon')}
-              variant="outline"
-              className="border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm"
-            >
-              <ClipboardCheck className="w-4 h-4 mr-2" />
-              Bulk Review
             </Button>
           </div>
 
@@ -572,34 +473,6 @@ export default function PatientChartList({ navigation }: Props) {
             )}
           </div>
 
-          {/* Selection Mode Actions */}
-          {isSelectionMode && (
-            <div className="bg-gradient-to-br from-[#E0F2FE] to-[#DBEAFE] border-0 rounded-2xl p-4 shadow-sm">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={handleSelectAll}
-                    className="flex items-center gap-2 text-[#0966CC] hover:text-[#0C4A6E] transition-colors"
-                  >
-                    {selectedCharts.size === allCharts.length ? (
-                      <CheckSquare className="w-5 h-5" />
-                    ) : (
-                      <Square className="w-5 h-5" />
-                    )}
-                    <span className="text-sm">
-                      {selectedCharts.size === allCharts.length ? 'Deselect All' : 'Select All'}
-                    </span>
-                  </button>
-                  {selectedCharts.size > 0 && (
-                    <span className="text-sm text-[#0966CC]">
-                      {selectedCharts.size} of {allCharts.length} selected
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Empty State */}
           {allCharts.length === 0 && (
             <div className="bg-white rounded-3xl border border-dashed border-slate-200 p-12 text-center">
@@ -629,15 +502,7 @@ export default function PatientChartList({ navigation }: Props) {
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               {/* Table Header - Desktop */}
               <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-3 bg-slate-50 border-b border-slate-200 text-xs font-medium text-slate-600">
-                {isSelectionMode && (
-                  <div className="col-span-1 flex items-center">
-                    <Checkbox
-                      checked={selectedCharts.size === allCharts.length && allCharts.length > 0}
-                      onCheckedChange={handleSelectAll}
-                    />
-                  </div>
-                )}
-                <div className={`${isSelectionMode ? 'col-span-3' : 'col-span-4'}`}>
+                <div className="col-span-4">
                   Patient
                 </div>
                 <div className="col-span-2">
@@ -761,26 +626,11 @@ export default function PatientChartList({ navigation }: Props) {
                       } ${
                         chart.status === 'Needs Reverification' ? 'border-l-4 border-l-red-400' : ''
                       }`}
-                      onClick={() => {
-                        if (isSelectionMode) {
-                          handleToggleChart(chartKey);
-                        } else {
-                          handleSelectChart(patient.id, chart.id);
-                        }
-                      }}
+                      onClick={() => handleSelectChart(patient.id, chart.id)}
                     >
                       {/* Desktop View */}
                       <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-slate-50 active:scale-[0.998] transition-all">
-                        {isSelectionMode && (
-                          <div className="col-span-1 flex items-center">
-                            <Checkbox
-                              checked={selectedCharts.has(chartKey)}
-                              onCheckedChange={() => handleToggleChart(chartKey)}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          </div>
-                        )}
-                        <div className={`${isSelectionMode ? 'col-span-3' : 'col-span-4'} flex items-center gap-3 min-w-0`}>
+                        <div className="col-span-4 flex items-center gap-3 min-w-0">
                           <Avatar className="w-10 h-10 border-2 border-slate-200 flex-shrink-0">
                             <AvatarFallback className={`text-sm ${
                               chart.status === 'Needs Reverification'
@@ -824,24 +674,13 @@ export default function PatientChartList({ navigation }: Props) {
                           <div className="text-sm text-slate-700">
                             {new Date(chart.createdDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                           </div>
-                          {!isSelectionMode && (
-                            <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-sky-600 group-hover:translate-x-0.5 transition-all" />
-                          )}
+                          <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-sky-600 group-hover:translate-x-0.5 transition-all" />
                         </div>
                       </div>
 
                       {/* Mobile View */}
                       <div className="md:hidden p-4 hover:bg-slate-50 transition-colors">
                         <div className="flex items-start gap-3">
-                          {isSelectionMode && (
-                            <div className="pt-1">
-                              <Checkbox
-                                checked={selectedCharts.has(chartKey)}
-                                onCheckedChange={() => handleToggleChart(chartKey)}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </div>
-                          )}
                           <Avatar className="w-10 h-10 border-2 border-slate-200 flex-shrink-0">
                             <AvatarFallback className={`text-sm ${
                               chart.status === 'Needs Reverification'
@@ -872,9 +711,7 @@ export default function PatientChartList({ navigation }: Props) {
                               <span>{new Date(chart.createdDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
                             </div>
                           </div>
-                          {!isSelectionMode && (
-                            <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-sky-600 flex-shrink-0 mt-1" />
-                          )}
+                          <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-sky-600 flex-shrink-0 mt-1" />
                         </div>
                       </div>
                     </div>
@@ -888,6 +725,67 @@ export default function PatientChartList({ navigation }: Props) {
         </div>
       </div>
 
+      {showBarcodeScanner && (
+        <MedicationBarcodeScanner
+          onMedicationsScanned={(meds: ScannedMedication[]) => {
+            const converted: Partial<MedicationInfo>[] = meds.map(m => ({
+              name: m.name,
+              dosage: m.dosage,
+              frequency: m.frequency,
+              route: m.route,
+            }));
+            setShowBarcodeScanner(false);
+            setScannedForSelection(converted);
+            setShowPatientSelection(true);
+          }}
+          onCancel={() => setShowBarcodeScanner(false)}
+        />
+      )}
+
+      {showOCRScanner && (
+        <MedicationOCRScanner
+          onMedicationsScanned={(meds, patientInfo) => {
+            setShowOCRScanner(false);
+            setScannedForSelection(meds);
+            setShowPatientSelection(true);
+          }}
+          onCancel={() => setShowOCRScanner(false)}
+          modal={true}
+        />
+      )}
+
+      {showPatientSelection && (
+        <PatientSelectionModal
+          scannedMedications={scannedForSelection}
+          scanType={scanTypeForSelection}
+          patients={patients.map(p => ({
+            id: p.id,
+            firstName: p.name.split(' ')[0] || p.name,
+            lastName: p.name.split(' ').slice(1).join(' '),
+            dateOfBirth: p.dob,
+          }))}
+          onSelectExistingPatient={(patientId) => {
+            const p = patients.find(px => px.id === patientId);
+            setShowPatientSelection(false);
+            if (p) {
+              navigation.navigate('ChartDetail', {
+                patientId: p.id,
+                chartId: p.charts[0]?.id,
+                prefillMedications: scannedForSelection,
+              });
+            }
+          }}
+          onCreateNewPatient={() => {
+            setShowPatientSelection(false);
+            navigation.navigate('NewPatientChart', {
+              scannedMedications: scannedForSelection,
+              scanType: scanTypeForSelection,
+            });
+          }}
+          onCancel={() => setShowPatientSelection(false)}
+        />
+      )}
+
       {/* Scan Options Sheet */}
       <Sheet open={isScanSheetOpen} onOpenChange={setIsScanSheetOpen}>
         <SheetContent side="bottom" className="h-[80vh] sm:h-auto">
@@ -898,9 +796,9 @@ export default function PatientChartList({ navigation }: Props) {
             </SheetDescription>
           </SheetHeader>
           <div className="mt-6 space-y-3">
-            {/* Bottle Scan */}
+            {/* Barcode Scan */}
             <button
-              onClick={() => handleScanOption('Bottle Scan')}
+              onClick={() => handleScanOption('Barcode Scan')}
               className="w-full bg-white rounded-xl border-2 border-slate-200 p-4 hover:border-emerald-400 hover:shadow-md transition-all text-left group"
             >
               <div className="flex items-center gap-4">

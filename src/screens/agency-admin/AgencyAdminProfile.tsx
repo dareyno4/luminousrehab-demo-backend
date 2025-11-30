@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../context/AuthContext';
+import { userProfileService, type UserProfile } from '../../services/userProfileService';
 import {
   ArrowLeft,
   Mail,
@@ -33,6 +35,7 @@ import {
   AlertTriangle,
   ChevronRight,
   ExternalLink,
+  Loader2,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
@@ -74,35 +77,78 @@ interface LoginSession {
 }
 
 export default function AgencyAdminProfile({ navigation }: Props) {
-  const [mfaEnabled, setMfaEnabled] = useState(true);
+  const { user } = useAuth();
+  const [mfaEnabled, setMfaEnabled] = useState(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [showMFADialog, setShowMFADialog] = useState(false);
   const [showDevicesDialog, setShowDevicesDialog] = useState(false);
   const [showAgencyDialog, setShowAgencyDialog] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [stats, setStats] = useState({ totalUsers: 0, totalClinicians: 0, totalPatients: 0, totalCharts: 0, chartsThisMonth: 0 });
+  const [tenantInfo, setTenantInfo] = useState<any>(null);
+
+  useEffect(() => {
+    if (user?.id && user?.tenant_id) {
+      setMfaEnabled(user.mfa_enabled || false);
+      loadProfileData();
+    }
+  }, [user]);
+
+  const loadProfileData = async () => {
+    if (!user?.id || !user?.tenant_id) return;
+    
+    try {
+      setLoading(true);
+      const [profileData, statsData, tenant] = await Promise.all([
+        userProfileService.getUserProfile(user.id),
+        userProfileService.getAgencyAdminStatistics(user.tenant_id),
+        userProfileService.getTenantInfo(user.tenant_id),
+      ]);
+      
+      setProfile(profileData);
+      setStats(statsData);
+      setTenantInfo(tenant);
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      toast.error('Failed to load profile data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#f8fafc]">
+        <Loader2 className="w-8 h-8 text-[#10B981] animate-spin" />
+      </div>
+    );
+  }
 
   const profileData = {
-    name: 'Jennifer Martinez',
+    name: `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim() || 'Unknown User',
     role: 'Agency Administrator',
-    email: 'jennifer.martinez@healthcarepartners.com',
-    phone: '(555) 234-5678',
-    address: '456 Admin Building, Healthcare City, HC 12345',
-    agency: 'HealthCare Partners LLC',
-    agencyLicense: 'HHA-789456',
-    agencyNPI: '1234567890',
-    agencyAddress: '123 Healthcare Blvd, Medical City, HC 12345',
-    agencyPhone: '(555) 123-4567',
-    supportEmail: 'support@healthcarepartners.com',
-    joinDate: 'March 10, 2024',
-    accountCreated: 'Jan 07, 2025',
-    lastUpdated: 'Feb 01, 2025',
+    email: profile?.email || '',
+    phone: profile?.phone_number || 'Not provided',
+    address: profile?.address || 'Not provided',
+    agency: tenantInfo?.name || 'Healthcare Partners',
+    agencyLicense: tenantInfo?.license_number || 'N/A',
+    agencyNPI: tenantInfo?.npi_number || 'N/A',
+    agencyAddress: tenantInfo?.address || 'Not provided',
+    agencyPhone: tenantInfo?.phone || 'Not provided',
+    supportEmail: tenantInfo?.contact_email || 'support@healthcare.com',
+    joinDate: profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Unknown',
+    accountCreated: profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown',
+    lastUpdated: profile?.last_login ? new Date(profile.last_login).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Never',
     lastPasswordChange: '30 days ago',
     lastLogin: 'Phoenix, AZ',
     lastLoginTime: 'Today at 9:42 AM',
-    totalUsers: 24,
-    totalClinicians: 18,
-    totalPatients: 156,
-    totalCharts: 423,
-    chartsThisMonth: 37,
+    totalUsers: stats.totalUsers,
+    totalClinicians: stats.totalClinicians,
+    totalPatients: stats.totalPatients,
+    totalCharts: stats.totalCharts,
+    chartsThisMonth: stats.chartsThisMonth,
     avgTurnaround: '2.1 days',
   };
 
@@ -151,16 +197,31 @@ export default function AgencyAdminProfile({ navigation }: Props) {
     toast.info('Avatar removed');
   };
 
-  const handleChangePassword = () => {
-    setShowPasswordDialog(true);
+  const handleChangePassword = async () => {
+    if (!user?.id) return;
+    
+    try {
+      setSaving(true);
+      setShowPasswordDialog(true);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleToggleMFA = (enabled: boolean) => {
-    setMfaEnabled(enabled);
-    if (enabled) {
-      setShowMFADialog(true);
-    } else {
-      toast.info('Two-factor authentication disabled');
+  const handleToggleMFA = async (enabled: boolean) => {
+    if (!user?.id) return;
+    
+    try {
+      if (enabled) {
+        setShowMFADialog(true);
+      } else {
+        await userProfileService.updateMFASettings(user.id, false);
+        setMfaEnabled(false);
+        toast.info('Two-factor authentication disabled');
+      }
+    } catch (error) {
+      console.error('Error toggling MFA:', error);
+      toast.error('Failed to update MFA settings');
     }
   };
 

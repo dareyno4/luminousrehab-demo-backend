@@ -306,13 +306,61 @@ export default function ChartDelivery({ navigation, route }: Props) {
     try {
       const blob = await generatePdfBlob();
       const publicUrl = await uploadPdfAndGetUrl(blob);
-      const subject = encodeURIComponent(`Patient Chart - ${patientName}`);
-      const body = encodeURIComponent(`Please find the chart PDF here:\n${publicUrl}${emailMessage ? `\n\n${emailMessage}` : ''}`);
-      window.location.href = `mailto:${encodeURIComponent(emailAddress)}?subject=${subject}&body=${body}`;
+
+      // Create simple HTML email
+      const senderName = `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Luminous Rehab';
+      const emailHtml = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          </head>
+          <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background-color: #f8f9fa; border-radius: 8px; padding: 30px; margin-bottom: 20px;">
+              <h1 style="color: #2563eb; margin-top: 0;">Patient Chart - ${patientName}</h1>
+              <p style="font-size: 16px; margin-bottom: 20px;">Hello,</p>
+              <p style="font-size: 16px; margin-bottom: 20px;">Please find the patient chart for <strong>${patientName}</strong> (Chart ID: ${chartId || 'N/A'}).</p>
+              ${emailMessage ? `<div style="background-color: white; border-left: 4px solid #2563eb; padding: 15px; margin: 20px 0;"><p style="margin: 0; font-style: italic;">${emailMessage}</p></div>` : ''}
+              <div style="margin: 30px 0;">
+                <a href="${publicUrl}" style="display: inline-block; background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">Download Chart PDF</a>
+              </div>
+              <p style="font-size: 14px; color: #666; margin-top: 30px;">Sent by ${senderName}</p>
+            </div>
+            <div style="text-align: center; font-size: 12px; color: #999; padding: 20px;">
+              <p>⚠️ Email delivery is currently disabled for HIPAA compliance.</p>
+              <p>This email was logged but not sent. Contact your administrator to enable HIPAA-compliant email service.</p>
+            </div>
+          </body>
+        </html>
+      `;
+
+      // Call the backend to log the email
+      const response = await fetch('http://localhost:8080/api/send-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${(await supabaseClient.auth.getSession()).data.session?.access_token}`,
+        },
+        body: JSON.stringify({
+          to: emailAddress,
+          subject: `Patient Chart - ${patientName}`,
+          html: emailHtml,
+          text: `Patient Chart for ${patientName}\n\nView and download the chart PDF here: ${publicUrl}${emailMessage ? `\n\nNote: ${emailMessage}` : ''}`,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send email');
+      }
+
+      alert('ℹ️ Email Delivery Disabled\n\nEmail delivery is currently disabled for HIPAA compliance.\n\nThe email content has been logged to the server console. To enable actual email delivery, your administrator needs to set up a HIPAA-compliant email service (e.g., SendGrid with BAA).\n\nThe PDF is still saved and accessible.');
+
       setDeliveredMethods(prev => ({ ...prev, email: true }));
     } catch (err: any) {
-      console.error('Email failed', err);
-      alert(err.message || 'Failed to prepare email');
+      console.error('Email operation failed', err);
+      alert(err.message || 'Failed to process email');
       return;
     } finally {
       setShowEmailModal(false);
@@ -326,7 +374,7 @@ export default function ChartDelivery({ navigation, route }: Props) {
       return;
     }
 
-    const allDelivered = 
+    const allDelivered =
       (!selectedMethods.pdf || deliveredMethods.pdf) &&
       (!selectedMethods.fax || deliveredMethods.fax) &&
       (!selectedMethods.email || deliveredMethods.email);
@@ -339,7 +387,7 @@ export default function ChartDelivery({ navigation, route }: Props) {
     setShowConfirmation(true);
   };
 
-    const confirmFinalize = async () => {
+  const confirmFinalize = async () => {
     setShowConfirmation(false);
 
     if (!user?.id || !user?.tenant_id || !chartId) {
@@ -348,6 +396,13 @@ export default function ChartDelivery({ navigation, route }: Props) {
     }
 
     try {
+      // Provide delivery metadata to satisfy DB check constraints
+      let deliveredVia: 'pdf' | 'fax' | 'email' | 'print' | null = null;
+      if (selectedMethods.pdf) deliveredVia = 'pdf';
+      else if (selectedMethods.email) deliveredVia = 'email';
+      else if (selectedMethods.fax) deliveredVia = 'fax';
+      else if (selectedMethods.print) deliveredVia = 'print';
+
       const payload: any = {
         status: 'pending_review',
         finalized_at: new Date().toISOString(),
@@ -360,12 +415,14 @@ export default function ChartDelivery({ navigation, route }: Props) {
         .eq('id', chartId);
 
       if (error) {
-        console.error('Error submitting chart for review:', error);
-        alert(`Failed to submit chart: ${error.message || 'Unknown error'}`);
+        console.error('Error finalizing chart:', error);
+        alert(`Failed to finalize chart: ${error.message || 'Unknown error'}`);
         return;
       }
 
-      alert('Chart has been submitted for agency admin review');
+      // Optional: add an audit log entry later if you want audit trail
+
+      alert('Chart has been sent for agency admin approval');
       navigation.navigate('ClinicianDashboard');
     } catch (err: any) {
       console.error('Unexpected error finalizing chart:', err);
@@ -375,7 +432,7 @@ export default function ChartDelivery({ navigation, route }: Props) {
 
 
   const anyMethodSelected = selectedMethods.pdf || selectedMethods.fax || selectedMethods.email || selectedMethods.print;
-  const allSelectedDelivered = 
+  const allSelectedDelivered =
     (!selectedMethods.pdf || deliveredMethods.pdf) &&
     (!selectedMethods.fax || deliveredMethods.fax) &&
     (!selectedMethods.email || deliveredMethods.email) &&
@@ -395,14 +452,14 @@ export default function ChartDelivery({ navigation, route }: Props) {
           </button>
           <h1 className="text-lg text-white">Chart Delivery</h1>
           <Button
-          onClick={handleExit}
-          variant="ghost"
-          size="sm"
-          className="h-9 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium flex items-center gap-1"
-        >
-          <X className="w-4 h-4" />
-          Exit
-        </Button>
+            onClick={handleExit}
+            variant="ghost"
+            size="sm"
+            className="h-9 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium flex items-center gap-1"
+          >
+            <X className="w-4 h-4" />
+            Exit
+          </Button>
 
         </div>
       </div>
@@ -410,7 +467,7 @@ export default function ChartDelivery({ navigation, route }: Props) {
       {/* Content */}
       <div className="flex-1 overflow-y-auto pb-24">
         <div className="max-w-2xl mx-auto p-6 space-y-6">
-          
+
           {/* Context Bar */}
           <div className="bg-white rounded-2xl border border-sky-200 p-5 shadow-sm">
             <div className="flex items-start gap-3">
@@ -494,11 +551,10 @@ export default function ChartDelivery({ navigation, route }: Props) {
 
             <div className="p-6 space-y-4">
               {/* Print Option */}
-              <div className={`border-2 rounded-xl p-5 transition-all ${
-                selectedMethods.print 
-                  ? 'border-slate-500 bg-slate-50' 
+              <div className={`border-2 rounded-xl p-5 transition-all ${selectedMethods.print
+                  ? 'border-slate-500 bg-slate-50'
                   : 'border-slate-200 bg-white'
-              }`}>
+                }`}>
                 <div className="flex items-start gap-4">
                   <Checkbox
                     id="print"
@@ -534,11 +590,10 @@ export default function ChartDelivery({ navigation, route }: Props) {
                 </div>
               </div>
               {/* PDF Download Option */}
-              <div className={`border-2 rounded-xl p-5 transition-all ${
-                selectedMethods.pdf 
-                  ? 'border-sky-500 bg-sky-50' 
+              <div className={`border-2 rounded-xl p-5 transition-all ${selectedMethods.pdf
+                  ? 'border-sky-500 bg-sky-50'
                   : 'border-slate-200 bg-white'
-              }`}>
+                }`}>
                 <div className="flex items-start gap-4">
                   <Checkbox
                     id="pdf"
@@ -574,11 +629,10 @@ export default function ChartDelivery({ navigation, route }: Props) {
               </div>
 
               {/* Fax Option */}
-              <div className={`border-2 rounded-xl p-5 transition-all ${
-                selectedMethods.fax 
-                  ? 'border-green-500 bg-green-50' 
+              <div className={`border-2 rounded-xl p-5 transition-all ${selectedMethods.fax
+                  ? 'border-green-500 bg-green-50'
                   : 'border-slate-200 bg-white'
-              }`}>
+                }`}>
                 <div className="flex items-start gap-4">
                   <Checkbox
                     id="fax"
@@ -614,11 +668,10 @@ export default function ChartDelivery({ navigation, route }: Props) {
               </div>
 
               {/* Email Option */}
-              <div className={`border-2 rounded-xl p-5 transition-all ${
-                selectedMethods.email 
-                  ? 'border-amber-500 bg-amber-50' 
+              <div className={`border-2 rounded-xl p-5 transition-all ${selectedMethods.email
+                  ? 'border-amber-500 bg-amber-50'
                   : 'border-slate-200 bg-white'
-              }`}>
+                }`}>
                 <div className="flex items-start gap-4">
                   <Checkbox
                     id="email"

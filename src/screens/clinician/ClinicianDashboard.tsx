@@ -65,6 +65,8 @@ import { Progress } from '../../components/ui/progress';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Separator } from '../../components/ui/separator';
 import { Alert, AlertDescription } from '../../components/ui/alert';
+import NotificationCenter from '../../components/NotificationCenter';
+import { notificationService } from '../../services/notificationService';
 import { Screen, NavigationParams } from '../../App';
 import { useAuth } from '../../context/AuthContext';
 import { fetchPatientsForClinician } from '../../services/patientService';
@@ -74,6 +76,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import PatientSelectionModal from '../../components/PatientSelectionModal';
 import MedicationBarcodeScanner, { ScannedMedication } from '../../components/MedicationBarcodeScanner';
 import MedicationOCRScanner from '../../components/MedicationOCRScanner';
+import PDFScanner from '../../components/PDFScanner';
 import type { MedicationInfo } from '../../utils/ocrService';
 
 // Time formatting utility for healthcare-friendly display
@@ -129,6 +132,9 @@ interface Props {
   navigation: {
     navigate: (screen: Screen, params?: NavigationParams) => void;
     goBack: () => void;
+  };
+  route?: {
+    params?: NavigationParams;
   };
 }
 
@@ -190,12 +196,19 @@ const mapChartSourceToType = (source: string): Chart['type'] => {
 };
 
 
-export default function ClinicianDashboard({ navigation }: Props) {
+export default function ClinicianDashboard({ navigation, route }: Props) {
   const { logout, user } = useAuth();
   // Patients state from database
   const [patients, setPatients] = useState<Patient[]>([]);
   const [isPatientsLoading, setIsPatientsLoading] = useState(true);
   const [patientsError, setPatientsError] = useState<string | null>(null);
+
+  // Auto-open PDF scanner if navigated with that parameter
+  useEffect(() => {
+    if (route?.params?.openPDFScanner) {
+      setShowPDFScanner(true);
+    }
+  }, [route?.params?.openPDFScanner]);
 
   useEffect(() => {
     async function loadPatients() {
@@ -241,8 +254,11 @@ setPatients(mappedData);
   //barcode/ocr stuff
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
   const [showOCRScanner, setShowOCRScanner] = useState(false);
+  const [showPDFScanner, setShowPDFScanner] = useState(false);
   const [scanTypeForSelection, setScanTypeForSelection] = useState<string>('');
   const [scannedForSelection, setScannedForSelection] = useState<Partial<MedicationInfo>[]>([]);
+  const [scannedPatientInfo, setScannedPatientInfo] = useState<any>(null);
+  const [scannedPDFFile, setScannedPDFFile] = useState<File | null>(null);
   const [showPatientSelection, setShowPatientSelection] = useState(false);
   const [showScanOptions, setShowScanOptions] = useState(false);
   const [isScanSheetOpen, setIsScanSheetOpen] = useState(false);
@@ -405,7 +421,7 @@ setPatients(mappedData);
   } else if (scanType === 'Bottle OCR') {
     setShowOCRScanner(true);
   } else if (scanType === 'Import PDF') {
-    toast.info('PDF/Image import coming soon');
+    setShowPDFScanner(true); // Use dedicated PDF scanner
   }
 };
 
@@ -898,14 +914,44 @@ setPatients(mappedData);
       {/* Global OCR Scanner */}
       {showOCRScanner && (
         <MedicationOCRScanner
-          onMedicationsScanned={(meds: Partial<MedicationInfo>[]) => {
+          onMedicationsScanned={(meds: Partial<MedicationInfo>[], patientInfo?: any) => {
             setShowOCRScanner(false);
             setScannedForSelection(meds);
+            // Store patient info for passing to NewPatientChart
+            if (patientInfo) {
+              console.log('Patient info from PDF:', patientInfo);
+              setScannedPatientInfo(patientInfo);
+            }
             setShowPatientSelection(true);
           }}
           onCancel={() => setShowOCRScanner(false)}
           modal={true}
         />
+      )}
+
+      {/* PDF Scanner (dedicated for multi-page PDFs) */}
+      {showPDFScanner && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <PDFScanner
+              onPDFScanned={(meds: Partial<MedicationInfo>[], patientInfo?: any, originalFile?: File) => {
+                setShowPDFScanner(false);
+                setScannedForSelection(meds);
+                if (patientInfo) {
+                  console.log('Patient info from PDF:', patientInfo);
+                  setScannedPatientInfo(patientInfo);
+                }
+                if (originalFile) {
+                  console.log('Storing PDF file for attachment:', originalFile.name);
+                  setScannedPDFFile(originalFile);
+                }
+                setShowPatientSelection(true);
+              }}
+              onCancel={() => setShowPDFScanner(false)}
+              modal={true}
+            />
+          </div>
+        </div>
       )}
 
       {/* Patient Selection after scan */}
@@ -932,10 +978,26 @@ setPatients(mappedData);
           }}
           onCreateNewPatient={() => {
             setShowPatientSelection(false);
-            navigation.navigate('NewPatientChart', {
+            // Pass both medications and patient info to avoid re-scanning
+            const navParams: any = {
               scannedMedications: scannedForSelection,
               scanType: scanTypeForSelection,
-            });
+              prefillData: scannedPatientInfo ? {
+                firstName: scannedPatientInfo.firstName,
+                lastName: scannedPatientInfo.lastName,
+                dateOfBirth: scannedPatientInfo.dateOfBirth,
+                phone: scannedPatientInfo.phone,
+                address: scannedPatientInfo.address,
+                medicalRecordNumber: scannedPatientInfo.medicalRecordNumber,
+              } : undefined,
+            };
+            
+            // Include PDF file if it was scanned
+            if (scannedPDFFile) {
+              navParams.attachments = [scannedPDFFile];
+            }
+            
+            navigation.navigate('NewPatientChart', navParams);
           }}
           onCancel={() => setShowPatientSelection(false)}
         />
@@ -2546,10 +2608,59 @@ return (
                 )}
               </div>
 
-              <button className="w-10 h-10 rounded-xl bg-[#f8fafc] hover:bg-[#f1f5f9] flex items-center justify-center relative transition-colors">
-                <Bell className="w-5 h-5 text-[#64748b]" />
-                <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#F59E0B] border-2 border-white" />
-              </button>
+              {/* Test Notification Button - Remove after testing */}
+              <Button
+                onClick={async () => {
+                  console.log('🧪 Testing notification system...');
+                  console.log('User:', user);
+                  console.log('User ID:', user?.id);
+                  
+                  if (!user?.id) {
+                    toast.error('User not logged in - user.id is missing');
+                    console.error('No user ID found!');
+                    return;
+                  }
+                  
+                  try {
+                    console.log('Creating notification for user:', user.id);
+                    const result = await notificationService.createNotification(
+                      user.id,
+                      'clinician',
+                      'chart_review',
+                      '✅ Chart Approved',
+                      'Your chart for patient John Smith has been approved by the admin.',
+                      'medium',
+                      { chartId: '123', patientName: 'John Smith' },
+                      '/charts/123',
+                      'View Chart'
+                    );
+                    console.log('✅ Notification created successfully:', result);
+                    toast.success('Test notification created! Check the bell icon.');
+                  } catch (error: any) {
+                    console.error('❌ Failed to create notification:', error);
+                    console.error('Error message:', error?.message);
+                    console.error('Error details:', error?.details || error?.hint || error);
+                    toast.error(`Failed: ${error?.message || 'Unknown error'}`);
+                  }
+                }}
+                variant="outline"
+                size="sm"
+                className="text-xs border-purple-300 text-purple-600 hover:bg-purple-50"
+              >
+                🧪 Test Notification
+              </Button>
+
+              <NotificationCenter 
+                userId={user?.id || ''}
+                userRole="clinician"
+                onNavigate={(url) => {
+                  if (url.includes('/charts')) {
+                    setActiveTab('charts');
+                  } else if (url.includes('/patients')) {
+                    setActiveTab('dashboard');
+                  }
+                }}
+              />
             </div>
           </div>
         </header>

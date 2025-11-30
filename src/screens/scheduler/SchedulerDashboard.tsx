@@ -32,6 +32,8 @@ import {
   Lock,
   Edit,
   EyeOff,
+  LightbulbIcon,
+  HelpCircle,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
@@ -60,6 +62,8 @@ import {
   PopoverTrigger,
 } from '../../components/ui/popover';
 import { Switch } from '../../components/ui/switch';
+import NotificationCenter from '../../components/NotificationCenter';
+import { notificationService } from '../../services/notificationService';
 import { Screen, NavigationParams } from '../../App';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
@@ -68,6 +72,7 @@ import SchedulerProfile from './SchedulerProfile';
 import SchedulerSettings from './SchedulerSettings';
 import DocumentLibrary from './DocumentLibrary';
 import DocumentScanner from './DocumentScanner';
+import DocumentCamera from '../../components/DocumentCamera';
 import {
   fetchAllCharts,
   fetchUnassignedCharts,
@@ -123,6 +128,9 @@ export default function SchedulerDashboard({ navigation }: Props) {
   const [uploadMethod, setUploadMethod] = useState<'camera' | 'file' | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [showScanGuideModal, setShowScanGuideModal] = useState(false);
+  const [showDocumentCamera, setShowDocumentCamera] = useState(false);
+  const [selectedChartForScan, setSelectedChartForScan] = useState<string | null>(null);
   
   // Form State
   const [newChart, setNewChart] = useState({
@@ -193,7 +201,15 @@ export default function SchedulerDashboard({ navigation }: Props) {
     try {
       setCreating(true);
       const result = await createPatientWithChart(newChart, user.tenant_id, user.id);
-      toast.success(`Chart created for ${result.patient.first_name} ${result.patient.last_name}`);
+      
+      if (result.existingChartFound) {
+        toast.error(`Patient ${result.patient.first_name} ${result.patient.last_name} already has a chart. Each patient can only have one chart.`);
+      } else if (result.isNewPatient) {
+        toast.success(`New patient and chart created for ${result.patient.first_name} ${result.patient.last_name}`);
+      } else {
+        toast.success(`Chart created for existing patient ${result.patient.first_name} ${result.patient.last_name}`);
+      }
+      
       setIsCreateChartModalOpen(false);
       setNewChart({
         first_name: '',
@@ -288,6 +304,25 @@ export default function SchedulerDashboard({ navigation }: Props) {
     setIsPatientSelectionOpen(true);
   };
 
+  const handleCameraCapture = async (file: File) => {
+    if (!selectedChartForScan || !user?.id || !user?.tenant_id) {
+      setShowDocumentCamera(false);
+      return;
+    }
+
+    try {
+      const { uploadDocument } = await import('../../services/documentService');
+      await uploadDocument(file, selectedChartForScan, user.tenant_id, user.id);
+      toast.success('Document captured and uploaded successfully');
+      setShowDocumentCamera(false);
+      setSelectedChartForScan(null);
+      loadData();
+    } catch (error: any) {
+      console.error('Error uploading captured document:', error);
+      toast.error('Failed to upload captured document');
+    }
+  };
+
   const handleQuickFileImport = () => {
     // Trigger file input
     const input = document.createElement('input');
@@ -319,9 +354,12 @@ export default function SchedulerDashboard({ navigation }: Props) {
         );
         toast.success(`${pendingFiles.length} file(s) uploaded successfully`);
       } else if (uploadMethod === 'camera') {
-        // For camera, we'll open the camera after patient selection
-        toast.info('Camera functionality will open after patient selection');
-        // You can implement camera capture here
+        // Open camera scanner for this chart
+        setSelectedChartForScan(chartId);
+        setIsPatientSelectionOpen(false);
+        setShowDocumentCamera(true);
+        setUploading(false);
+        return;
       }
       
       setIsPatientSelectionOpen(false);
@@ -735,22 +773,12 @@ export default function SchedulerDashboard({ navigation }: Props) {
     
     return (
       <div className="space-y-6">
-        {/* Header with Quick Scan Button */}
+        {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-xl text-[#0f172a]">Scan Documents</h2>
             <p className="text-sm text-[#64748b]">Scan and attach documents to patient charts</p>
           </div>
-          <Button
-            onClick={() => {
-              console.log('Opening quick scan');
-              alert('Camera scan would open here');
-            }}
-            className="bg-[#F59E0B] hover:bg-[#D97706] text-white"
-          >
-            <Camera className="w-4 h-4 mr-2" />
-            New Scan
-          </Button>
         </div>
 
         {/* Status Chips */}
@@ -838,11 +866,12 @@ export default function SchedulerDashboard({ navigation }: Props) {
               variant="outline" 
               size="sm"
               onClick={() => {
-                console.log('Opening scan guide');
-                alert('Scan quality guide would open here with tips about lighting, angle, blur, etc.');
+                console.log('View Guide clicked, opening modal');
+                setShowScanGuideModal(true);
               }}
               className="border-[#E0F2FE] text-[#0966CC] hover:bg-[#F0F9FF] flex-shrink-0"
             >
+              <HelpCircle className="w-4 h-4 mr-1" />
               View Guide
             </Button>
           </div>
@@ -1509,10 +1538,50 @@ export default function SchedulerDashboard({ navigation }: Props) {
             </div>
 
             <div className="flex items-center gap-2">
-              <button className="w-10 h-10 rounded-xl bg-[#f8fafc] hover:bg-[#f1f5f9] flex items-center justify-center relative transition-colors">
-                <Bell className="w-5 h-5 text-[#64748b]" />
-                <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#F59E0B] border-2 border-white" />
-              </button>
+              {/* Test Notification Button - Remove after testing */}
+              <Button
+                onClick={async () => {
+                  if (!user?.id) {
+                    toast.error('User not logged in');
+                    return;
+                  }
+                  
+                  try {
+                    await notificationService.createNotification(
+                      user.id,
+                      'scheduler',
+                      'patient_added',
+                      '👤 New Patient Added',
+                      'Michael Brown has been added to the system.',
+                      'medium',
+                      { patientId: '789', patientName: 'Michael Brown' },
+                      '/scheduler/patients/789',
+                      'View Patient'
+                    );
+                    toast.success('Test notification created! Check the bell icon.');
+                  } catch (error) {
+                    console.error('Failed to create notification:', error);
+                    toast.error('Failed to create notification');
+                  }
+                }}
+                variant="outline"
+                size="sm"
+                className="text-xs border-purple-300 text-purple-600 hover:bg-purple-50"
+              >
+                🧪 Test Notification
+              </Button>
+
+              <NotificationCenter 
+                userId={user?.id || ''}
+                userRole="scheduler"
+                onNavigate={(url) => {
+                  if (url.includes('/charts')) {
+                    setActiveTab('charts');
+                  } else if (url.includes('/documents')) {
+                    setActiveTab('documents');
+                  }
+                }}
+              />
             </div>
           </div>
         </header>
@@ -1720,8 +1789,8 @@ export default function SchedulerDashboard({ navigation }: Props) {
 
       {/* Patient Selection Modal for Document Upload */}
       <Dialog open={isPatientSelectionOpen} onOpenChange={setIsPatientSelectionOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-          <DialogHeader>
+        <DialogContent className="max-w-md max-h-[70vh] flex flex-col p-0">
+          <DialogHeader className="p-6 pb-4">
             <DialogTitle>Select Patient for Document</DialogTitle>
             <DialogDescription>
               {uploadMethod === 'camera' 
@@ -1730,13 +1799,13 @@ export default function SchedulerDashboard({ navigation }: Props) {
             </DialogDescription>
           </DialogHeader>
           
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto px-6 min-h-0">
             {uploading ? (
               <div className="flex items-center justify-center p-8">
                 <Loader2 className="w-8 h-8 text-[#F59E0B] animate-spin" />
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2 pb-4">
                 {charts.map((chart) => (
                   <button
                     key={chart.id}
@@ -1774,7 +1843,7 @@ export default function SchedulerDashboard({ navigation }: Props) {
             )}
           </div>
           
-          <DialogFooter>
+          <DialogFooter className="p-6 pt-4">
             <Button
               variant="outline"
               onClick={() => {
@@ -1789,6 +1858,141 @@ export default function SchedulerDashboard({ navigation }: Props) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Scanning Guide Modal */}
+      <Dialog open={showScanGuideModal} onOpenChange={setShowScanGuideModal}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LightbulbIcon className="w-5 h-5 text-[#F59E0B]" />
+              Document Scanning Guide
+            </DialogTitle>
+            <DialogDescription>
+              Tips for getting the best scan results
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            {/* Best Practices */}
+            <div>
+              <h3 className="font-semibold text-sm text-slate-900 mb-3 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#10B981]" />
+                Best Practices
+              </h3>
+              <div className="space-y-3">
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Good Lighting</p>
+                  <p className="text-xs text-[#065F46]">Use natural light or bright indoor lighting. Avoid shadows and glare on the document.</p>
+                </div>
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Flat Surface</p>
+                  <p className="text-xs text-[#065F46]">Place the document on a flat, contrasting surface. Use a dark background for white paper.</p>
+                </div>
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Hold Steady</p>
+                  <p className="text-xs text-[#065F46]">Keep your device stable and parallel to the document. Use both hands or prop against a surface.</p>
+                </div>
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Full Document</p>
+                  <p className="text-xs text-[#065F46]">Capture the entire document in frame with all four edges visible. Leave a small margin.</p>
+                </div>
+                <div className="bg-[#D1FAE5] border border-[#A7F3D0] rounded-lg p-3">
+                  <p className="text-sm text-[#065F46] font-medium mb-1">✓ Sharp Focus</p>
+                  <p className="text-xs text-[#065F46]">Ensure text is clear and readable. Tap screen to focus if needed before capturing.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Common Mistakes */}
+            <div>
+              <h3 className="font-semibold text-sm text-slate-900 mb-3 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-[#DC2626]" />
+                Avoid These Mistakes
+              </h3>
+              <div className="space-y-3">
+                <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-3">
+                  <p className="text-sm text-[#7F1D1D] font-medium mb-1">✗ Poor Lighting</p>
+                  <p className="text-xs text-[#7F1D1D]">Dark or shadowy photos make text hard to read and reduce accuracy.</p>
+                </div>
+                <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-3">
+                  <p className="text-sm text-[#7F1D1D] font-medium mb-1">✗ Blurry Images</p>
+                  <p className="text-xs text-[#7F1D1D]">Motion blur or out-of-focus shots won't process correctly. Retake if blurry.</p>
+                </div>
+                <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-3">
+                  <p className="text-sm text-[#7F1D1D] font-medium mb-1">✗ Cropped Text</p>
+                  <p className="text-xs text-[#7F1D1D]">Missing edges or cut-off text means important information may be lost.</p>
+                </div>
+                <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-3">
+                  <p className="text-sm text-[#7F1D1D] font-medium mb-1">✗ Glare/Reflections</p>
+                  <p className="text-xs text-[#7F1D1D]">Glossy surfaces or flash can create bright spots that obscure text.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Document Types */}
+            <div>
+              <h3 className="font-semibold text-sm text-slate-900 mb-3">Supported Document Types</h3>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Discharge Summaries</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Medical Records</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Insurance Cards</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Lab Results</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Prescriptions</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-700">
+                  <FileText className="w-4 h-4 text-[#0966CC]" />
+                  <span>Referral Forms</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Tips */}
+            <div className="bg-[#FEF3C7] border border-[#FDE68A] rounded-lg p-4">
+              <h3 className="font-semibold text-sm text-[#92400E] mb-2">💡 Pro Tips</h3>
+              <ul className="space-y-1 text-xs text-[#92400E]">
+                <li>• For multi-page documents, scan each page separately</li>
+                <li>• PDFs are best for already-digital documents</li>
+                <li>• Use the file upload option for documents on your computer</li>
+                <li>• Camera scan works best for physical paper documents</li>
+              </ul>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              onClick={() => setShowScanGuideModal(false)}
+              className="bg-[#0966CC] hover:bg-[#075497] text-white"
+            >
+              Got It
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Document Camera */}
+      {showDocumentCamera && (
+        <DocumentCamera
+          onCapture={handleCameraCapture}
+          onCancel={() => {
+            setShowDocumentCamera(false);
+            setSelectedChartForScan(null);
+          }}
+        />
+      )}
     </div>
   );
 }
