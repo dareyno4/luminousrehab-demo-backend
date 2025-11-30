@@ -1,0 +1,67 @@
+-- Audit Logs Table - ACTUAL PRODUCTION SCHEMA
+-- This table already exists in your database with this schema
+-- Keeping this file for reference only
+
+-- CREATE TABLE public.audit_logs (
+--   id TEXT NOT NULL DEFAULT (
+--     (
+--       (
+--         'audit-'::TEXT || (
+--           (
+--             EXTRACT(
+--               epoch
+--               FROM
+--                 NOW()
+--             )
+--           )::BIGINT
+--         )::TEXT
+--       ) || '-'::TEXT
+--     ) || (FLOOR((RANDOM() * (1000000)::DOUBLE PRECISION)))::TEXT
+--   ),
+--   tenant_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   entity_type TEXT NOT NULL,
+--   entity_id TEXT NOT NULL,
+--   action TEXT NOT NULL,
+--   changes JSONB NULL,
+--   metadata JSONB NULL,
+--   ip_address INET NULL,
+--   user_agent TEXT NULL,
+--   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+--   CONSTRAINT audit_logs_pkey PRIMARY KEY (id),
+--   CONSTRAINT audit_logs_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
+--   CONSTRAINT audit_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE RESTRICT,
+--   CONSTRAINT audit_logs_action_check CHECK (
+--     (
+--       action = ANY (
+--         ARRAY[
+--           'created'::TEXT,
+--           'updated'::TEXT,
+--           'deleted'::TEXT,
+--           'finalized'::TEXT,
+--           'delivered'::TEXT,
+--           'returned'::TEXT,
+--           'exported'::TEXT,
+--           'viewed'::TEXT
+--         ]
+--       )
+--     )
+--   ),
+--   CONSTRAINT audit_logs_entity_type_check CHECK (
+--     (
+--       entity_type = ANY (
+--         ARRAY[
+--           'tenant'::TEXT,
+--           'user'::TEXT,
+--           'patient'::TEXT,
+--           'chart'::TEXT,
+--           'medication'::TEXT,
+--           'export'::TEXT
+--         ]
+--       )
+--     )
+--   )
+-- ) TABLESPACE pg_default;
+
+COMMENT ON TABLE public.audit_logs IS 'Tracks all actions in the system for security and compliance (ALREADY EXISTS)';
+

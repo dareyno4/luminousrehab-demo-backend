@@ -1,0 +1,2107 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { 
+  Building2, Plus, LogOut, Menu, User, Settings, Lock, AlertTriangle, Users, FileText, Activity, 
+  Shield, Zap, MoreVertical, Search, Filter, Info, ExternalLink, CheckCircle2, Clock, Download, 
+  Eye, Trash2, Mail, Key, Monitor, X, ChevronRight, BarChart3, Flag, Database, Copy, Moon, Sun,
+  UserCog, History, Ban, PlayCircle, Smartphone, Upload, CheckCircle, XCircle, AlertCircleIcon
+} from 'lucide-react';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../../components/ui/dropdown-menu';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../components/ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../../components/ui/tooltip';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
+import { Checkbox } from '../../components/ui/checkbox';
+import { Avatar, AvatarFallback } from '../../components/ui/avatar';
+import { Textarea } from '../../components/ui/textarea';
+import { Switch } from '../../components/ui/switch';
+import { Separator } from '../../components/ui/separator';
+import { toast } from 'sonner';
+import { Toaster } from '../../components/ui/sonner';
+import { Screen, NavigationParams } from '../../App';
+import { useAuth } from '../../context/AuthContext';
+import { CommandPalette } from '../../components/CommandPalette';
+import {
+  fetchAllTenants,
+  createTenant,
+  updateTenant,
+  suspendTenant,
+  unsuspendTenant,
+  updateFeatureFlags,
+  uploadBAADocument,
+  fetchBAADocuments,
+  fetchAuditLogs,
+  getSuperAdminStats,
+  impersonateTenant,
+  type Tenant,
+  type BAADocument,
+  type AuditLog,
+} from '../../services/superAdminService';
+
+interface Props {
+  navigation: {
+    navigate: (screen: Screen, params?: NavigationParams) => void;
+    goBack: () => void;
+  };
+}
+
+type TabType = 'agencies' | 'profile' | 'settings';
+type TimeframeType = '7d' | '30d' | 'YTD';
+
+export default function SuperAdminDashboard({ navigation }: Props) {
+  const { logout, user } = useAuth();
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>('agencies');
+  const [isAddAgencyModalOpen, setIsAddAgencyModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [environmentFilter, setEnvironmentFilter] = useState<string>('all');
+  const [timeframe, setTimeframe] = useState<TimeframeType>('7d');
+  const [selectedTenant, setSelectedTenant] = useState<any | null>(null);
+  const [isBAADialogOpen, setIsBAADialogOpen] = useState(false);
+  const [isAuditLogOpen, setIsAuditLogOpen] = useState(false);
+  const [isImpersonateOpen, setIsImpersonateOpen] = useState(false);
+  const [impersonateTenantData, setImpersonateTenantData] = useState<any | null>(null);
+  const [impersonateReason, setImpersonateReason] = useState('');
+  const [isFeatureFlagsOpen, setIsFeatureFlagsOpen] = useState(false);
+  const [featureFlagsTenant, setFeatureFlagsTenant] = useState<any | null>(null);
+  const [isSuspendDialogOpen, setIsSuspendDialogOpen] = useState(false);
+  const [suspendTenantData, setSuspendTenantData] = useState<any | null>(null);
+  const [suspendReason, setSuspendReason] = useState('');
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  
+  // Real data state
+  const [tenants, setTenants] = useState<any[]>([]);
+  const [baaDocuments, setBAADocuments] = useState<BAADocument[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalTenants: 0,
+    activeTenants: 0,
+    suspendedTenants: 0,
+    baaPending: 0,
+    baaExpiring: 0,
+    totalUsers: 0,
+    totalPatients: 0,
+    totalCharts: 0,
+  });
+
+  // BAA upload
+  const [baaFile, setBAAFile] = useState<File | null>(null);
+  const [baaSignedBy, setBAASignedBy] = useState('');
+  const [baaExpiresAt, setBAAExpiresAt] = useState('');
+  
+  // Settings
+  const [darkMode, setDarkMode] = useState(false);
+  const [defaultSort, setDefaultSort] = useState('created');
+  const [defaultAnalyticsWindow, setDefaultAnalyticsWindow] = useState('7d');
+  const [emailDigestFrequency, setEmailDigestFrequency] = useState('daily');
+
+  const [formData, setFormData] = useState({
+    agencyName: '',
+    subdomain: '',
+    domainSuffix: '.app',
+    ein: '',
+    contactEmail: '',
+    contactPhone: '',
+    billingPlan: 'starter' as 'enterprise' | 'professional' | 'starter' | 'trial',
+    seats: 10,
+    environment: 'onboarding' as 'production' | 'test' | 'trial' | 'onboarding',
+    region: 'us-east',
+    testMode: false,
+  });
+
+  // Load data on mount
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [tenantsData, statsData, auditData] = await Promise.all([
+        fetchAllTenants(),
+        getSuperAdminStats(),
+        fetchAuditLogs({ limit: 50 }),
+      ]);
+
+      setTenants(tenantsData);
+      setStats(statsData);
+      setAuditLogs(auditData);
+    } catch (error) {
+      console.error('Error loading super admin data:', error);
+      toast.error('Failed to load dashboard data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const [agencies] = useState<Agency[]>([
+    {
+      id: '1',
+      name: 'Luminous QA – Test HHA',
+      status: 'Active',
+      environment: 'Test',
+      subdomain: 'qa.app',
+      contact: 'admin@qa-hha.test',
+      ein: '12-3456789',
+      created: '12/31/2024',
+      baaStatus: 'BAA Signed',
+      baaSignedDate: 'Jan 15, 2025',
+      baaSignedBy: 'Admin User',
+      billingPlan: 'Professional',
+      seats: 25,
+      seatsUsed: 18,
+      renewal: 'Dec 2025',
+      lastActive: '2 hours ago',
+      systemHealth: 'Healthy',
+      lastImport: '32 docs today',
+      lastImportSuccess: true,
+      clinicianCount: 8,
+      unverifiedUsers: 1,
+      mfaPercentage: 87,
+      onboardingComplete: 100,
+      region: 'US-West',
+      featureFlags: ['New OCR', 'Background sync v2'],
+    },
+    {
+      id: '2',
+      name: 'Sample Home Health Agency',
+      status: 'Active',
+      environment: 'Production',
+      subdomain: 'sample.app',
+      contact: 'admin@samplehha.com',
+      ein: '98-7654321',
+      created: '1/31/2025',
+      baaStatus: 'BAA Signed',
+      baaSignedDate: 'Feb 1, 2025',
+      baaSignedBy: 'Agency Admin',
+      billingPlan: 'Enterprise',
+      seats: 50,
+      seatsUsed: 48,
+      renewal: 'Jan 2026',
+      lastActive: '15 mins ago',
+      systemHealth: 'Healthy',
+      lastImport: '128 docs today',
+      lastImportSuccess: true,
+      clinicianCount: 24,
+      unverifiedUsers: 0,
+      mfaPercentage: 100,
+      onboardingComplete: 100,
+      region: 'US-East',
+      featureFlags: ['New OCR', 'Background sync v2', 'RN mobile beta'],
+    },
+    {
+      id: '3',
+      name: 'New Agency Without BAA',
+      status: 'At-Risk',
+      environment: 'Onboarding',
+      subdomain: 'newagency.app',
+      contact: 'contact@newagency.com',
+      ein: '',
+      created: '10/7/2025',
+      baaStatus: 'BAA Not Signed',
+      billingPlan: 'Trial',
+      seats: 10,
+      seatsUsed: 7,
+      renewal: 'Nov 15, 2025',
+      lastActive: '3 days ago',
+      systemHealth: 'Warning',
+      lastImport: 'No activity',
+      lastImportSuccess: false,
+      clinicianCount: 2,
+      unverifiedUsers: 5,
+      mfaPercentage: 40,
+      onboardingComplete: 45,
+      region: 'US-West',
+      featureFlags: [],
+    },
+    {
+      id: '4',
+      name: 'Sunrise Healthcare',
+      status: 'Active',
+      environment: 'Production',
+      subdomain: 'sunrise.app',
+      contact: 'admin@sunrisehc.com',
+      ein: '45-6789012',
+      created: '3/12/2025',
+      baaStatus: 'BAA Expiring Soon',
+      baaSignedDate: 'Mar 15, 2025',
+      baaSignedBy: 'System Admin',
+      billingPlan: 'Enterprise',
+      seats: 75,
+      seatsUsed: 62,
+      renewal: 'Mar 2026',
+      lastActive: '1 hour ago',
+      systemHealth: 'Healthy',
+      lastImport: '89 docs today',
+      lastImportSuccess: true,
+      clinicianCount: 34,
+      unverifiedUsers: 2,
+      mfaPercentage: 94,
+      onboardingComplete: 100,
+      region: 'US-Central',
+      featureFlags: ['New OCR'],
+    },
+  ]);
+
+  // Keyboard shortcut for command palette
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Transform and filter tenants
+  const transformedTenants = tenants.map(tenant => ({
+    ...tenant,
+    statusDisplay: tenant.status === 'active' ? 'Active' :
+                   tenant.status === 'suspended' ? 'Suspended' :
+                   tenant.status === 'trial' ? 'Trial' : 'Inactive',
+    environmentDisplay: tenant.environment === 'production' ? 'Production' :
+                        tenant.environment === 'test' ? 'Test' :
+                        tenant.environment === 'trial' ? 'Trial' : 'Onboarding',
+    baaStatusDisplay: tenant.baa_status === 'signed' ? 'BAA Signed' :
+                      tenant.baa_status === 'expiring_soon' ? 'BAA Expiring Soon' : 'BAA Not Signed',
+  }));
+
+  const filteredTenants = transformedTenants.filter((tenant) => {
+    const matchesSearch = 
+      tenant.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      tenant.subdomain?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      tenant.contact_email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      tenant.ein?.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesStatus = statusFilter === 'all' || tenant.status === statusFilter;
+    const matchesEnvironment = environmentFilter === 'all' || tenant.environment === environmentFilter;
+    
+    return matchesSearch && matchesStatus && matchesEnvironment;
+  });
+
+  const handleSignOut = () => {
+    logout();
+    navigation.navigate('Landing');
+  };
+
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab);
+    setIsDrawerOpen(false);
+  };
+
+  const handleFormChange = (field: string, value: string | boolean | number) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleAddAgency = async () => {
+    if (!formData.agencyName || !formData.subdomain || !formData.contactEmail) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+    
+    try {
+      await createTenant({
+        name: formData.agencyName,
+        subdomain: formData.subdomain,
+        ein: formData.ein,
+        contact_email: formData.contactEmail,
+        contact_phone: formData.contactPhone,
+        billing_plan: formData.billingPlan,
+        seats_total: formData.seats,
+        environment: formData.environment,
+        region: formData.region,
+      });
+      
+      toast.success('Agency created successfully!');
+      setIsAddAgencyModalOpen(false);
+      setFormData({
+        agencyName: '',
+        subdomain: '',
+        domainSuffix: '.app',
+        ein: '',
+        contactEmail: '',
+        contactPhone: '',
+        billingPlan: 'starter',
+        seats: 10,
+        environment: 'onboarding',
+        region: 'us-east',
+        testMode: false,
+      });
+      loadData(); // Reload data
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create agency');
+    }
+  };
+
+  const handleImpersonate = async () => {
+    if (!impersonateReason.trim() || !impersonateTenantData) {
+      toast.error('Please provide a reason for impersonation');
+      return;
+    }
+    
+    try {
+      await impersonateTenant(impersonateTenantData.id, impersonateReason);
+      toast.success(`Impersonating ${impersonateTenantData.name} for support`);
+      setIsImpersonateOpen(false);
+      setImpersonateReason('');
+      loadData(); // Reload to update audit logs
+    } catch (error) {
+      toast.error('Failed to start impersonation');
+    }
+  };
+
+  const handleSuspend = async () => {
+    if (!suspendReason.trim() || !suspendTenantData) {
+      toast.error('Please provide a reason for suspension');
+      return;
+    }
+    
+    try {
+      await suspendTenant(suspendTenantData.id, suspendReason);
+      toast.success(`${suspendTenantData.name} has been suspended`);
+      setIsSuspendDialogOpen(false);
+      setSuspendReason('');
+      loadData(); // Reload data
+    } catch (error) {
+      toast.error('Failed to suspend agency');
+    }
+  };
+
+  const handleUnsuspend = async (tenantId: string) => {
+    try {
+      await unsuspendTenant(tenantId);
+      toast.success('Agency has been reactivated');
+      loadData();
+    } catch (error) {
+      toast.error('Failed to reactivate agency');
+    }
+  };
+
+  const handleUploadBAA = async () => {
+    if (!baaFile || !baaSignedBy || !baaExpiresAt || !selectedTenant) {
+      toast.error('Please fill in all BAA fields');
+      return;
+    }
+
+    try {
+      await uploadBAADocument(selectedTenant.id, baaFile, baaSignedBy, baaExpiresAt);
+      toast.success('BAA document uploaded successfully');
+      setIsBAADialogOpen(false);
+      setBAAFile(null);
+      setBAASignedBy('');
+      setBAAExpiresAt('');
+      loadData();
+    } catch (error) {
+      toast.error('Failed to upload BAA document');
+    }
+  };
+
+  const handleViewBAA = async (tenantId: string) => {
+    try {
+      const docs = await fetchBAADocuments(tenantId);
+      setBAADocuments(docs);
+      const tenant = tenants.find(t => t.id === tenantId);
+      setSelectedTenant(tenant);
+      setIsBAADialogOpen(true);
+    } catch (error) {
+      toast.error('Failed to load BAA documents');
+    }
+  };
+
+  const handleUpdateFeatureFlags = async (tenantId: string, flags: string[]) => {
+    try {
+      await updateFeatureFlags(tenantId, flags);
+      toast.success('Feature flags updated');
+      loadData();
+    } catch (error) {
+      toast.error('Failed to update feature flags');
+    }
+  };
+
+  const handleExportCSV = () => {
+    const csv = [
+      ['Name', 'Subdomain', 'Status', 'Environment', 'BAA Status', 'Users', 'Patients', 'Charts'],
+      ...transformedTenants.map(t => [
+        t.name,
+        t.subdomain,
+        t.statusDisplay,
+        t.environmentDisplay,
+        t.baaStatusDisplay,
+        t.user_count || 0,
+        t.patient_count || 0,
+        t.chart_count || 0,
+      ])
+    ].map(row => row.join(',')).join('\n');
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `agencies-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    toast.success('Exporting agencies to CSV...');
+  };
+
+  const handleRevokeSession = (sessionId: string) => {
+    toast.success('Session revoked successfully');
+  };
+
+  // Helper function for environment badge
+  const getEnvironmentBadge = (env: string, clickable = false) => {
+    const configs: Record<string, any> = {
+      test: { icon: '🧪', color: 'bg-[#DBEAFE] text-[#1E40AF] border-[#93C5FD]', label: 'Test' },
+      production: { icon: '🏥', color: 'bg-[#D1FAE5] text-[#047857] border-[#A7F3D0]', label: 'Production' },
+      trial: { icon: '🌱', color: 'bg-[#FEF3C7] text-[#B45309] border-[#FDE68A]', label: 'Trial' },
+      onboarding: { icon: '🚧', color: 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]', label: 'Onboarding' },
+    };
+    const config = configs[env] || configs.onboarding;
+    return (
+      <Badge 
+        className={`${config.color} ${clickable ? 'cursor-pointer hover:opacity-80' : ''}`}
+        onClick={clickable ? () => toggleFilter(env) : undefined}
+      >
+        <span className="mr-1">{config.icon}</span>
+        {config.label}
+      </Badge>
+    );
+  };
+
+  // Helper function for status badge
+  const getStatusBadge = (status: Agency['status'], clickable = false) => {
+    const configs = {
+      Active: { color: 'bg-[#D1FAE5] text-[#047857] border-[#A7F3D0]' },
+      Inactive: { color: 'bg-[#E5E7EB] text-[#4B5563] border-[#D1D5DB]' },
+      Suspended: { color: 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]' },
+      'At-Risk': { color: 'bg-[#FED7AA] text-[#C2410C] border-[#FDBA74]' },
+    };
+    return (
+      <Badge 
+        className={`${configs[status].color} ${clickable ? 'cursor-pointer hover:opacity-80' : ''}`}
+        onClick={clickable ? () => toggleFilter(status) : undefined}
+      >
+        {status}
+      </Badge>
+    );
+  };
+
+  // Helper function for health status
+  const getHealthStatus = (health: Agency['systemHealth']) => {
+    const configs = {
+      Healthy: { icon: CheckCircle2, color: 'text-[#10B981]', bg: 'bg-[#D1FAE5]' },
+      Warning: { icon: AlertTriangle, color: 'text-[#F59E0B]', bg: 'bg-[#FEF3C7]' },
+      Critical: { icon: AlertTriangle, color: 'text-[#DC2626]', bg: 'bg-[#FEE2E2]' },
+    };
+    const config = configs[health];
+    const Icon = config.icon;
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger>
+            <div className={`w-8 h-8 rounded-lg ${config.bg} flex items-center justify-center`}>
+              <Icon className={`w-4 h-4 ${config.color}`} />
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>System Health: {health}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  };
+
+  // Security posture indicator
+  const getSecurityPosture = (agency: Agency) => {
+    let score = 0;
+    if (agency.baaStatus === 'BAA Signed') score += 25;
+    if (agency.mfaPercentage >= 90) score += 25;
+    else if (agency.mfaPercentage >= 70) score += 15;
+    if (agency.unverifiedUsers === 0) score += 25;
+    else if (agency.unverifiedUsers <= 2) score += 15;
+    if (agency.systemHealth === 'Healthy') score += 25;
+    else if (agency.systemHealth === 'Warning') score += 15;
+
+    const color = score >= 80 ? 'text-[#10B981]' : score >= 50 ? 'text-[#F59E0B]' : 'text-[#DC2626]';
+    const bg = score >= 80 ? 'bg-[#D1FAE5]' : score >= 50 ? 'bg-[#FEF3C7]' : 'bg-[#FEE2E2]';
+    const label = score >= 80 ? 'Good' : score >= 50 ? 'Fair' : 'Poor';
+
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger>
+            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md ${bg}`}>
+              <Shield className={`w-3 h-3 ${color}`} />
+              <span className={`text-xs ${color}`}>{label}</span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">
+            <p className="mb-2">Security Posture Checklist:</p>
+            <ul className="text-xs space-y-1">
+              <li>✓ BAA: {agency.baaStatus}</li>
+              <li>✓ MFA: {agency.mfaPercentage}% of users</li>
+              <li>✓ Unverified Users: {agency.unverifiedUsers}</li>
+              <li>✓ System Health: {agency.systemHealth}</li>
+            </ul>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  };
+
+  // Sidebar Navigation Component (Desktop)
+  const renderSidebarNav = () => (
+    <nav className="space-y-1">
+      <button
+        onClick={() => setActiveTab('agencies')}
+        className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${
+          activeTab === 'agencies'
+            ? 'bg-[#E0F2FE] text-[#0966CC]'
+            : 'text-[#64748b] hover:bg-[#f8fafc]'
+        }`}
+      >
+        <Building2 className="w-5 h-5" />
+        <span>Agencies</span>
+      </button>
+
+      <button
+        onClick={() => setActiveTab('profile')}
+        className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${
+          activeTab === 'profile'
+            ? 'bg-[#E0F2FE] text-[#0966CC]'
+            : 'text-[#64748b] hover:bg-[#f8fafc]'
+        }`}
+      >
+        <User className="w-5 h-5" />
+        <span>Account Hub</span>
+      </button>
+
+      <button
+        onClick={() => setActiveTab('settings')}
+        className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${
+          activeTab === 'settings'
+            ? 'bg-[#E0F2FE] text-[#0966CC]'
+            : 'text-[#64748b] hover:bg-[#f8fafc]'
+        }`}
+      >
+        <Settings className="w-5 h-5" />
+        <span>Preferences</span>
+      </button>
+
+      <Separator className="my-2" />
+
+      <button
+        onClick={() => setIsAuditLogOpen(true)}
+        className="w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors text-[#64748b] hover:bg-[#f8fafc]"
+      >
+        <History className="w-5 h-5" />
+        <span>Audit Log</span>
+      </button>
+    </nav>
+  );
+
+  // Agencies Tab Content
+  const renderAgenciesTab = () => (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+      {/* Compliance Alert */}
+      {complianceRisks > 0 && (
+        <div className="bg-[#FEF2F2] border border-[#FCA5A5] rounded-xl p-4 mb-6 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-[#DC2626] mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <h3 className="text-[#DC2626] mb-1">
+              {complianceRisks} Compliance Risk{complianceRisks !== 1 ? 's' : ''} Detected
+            </h3>
+            <p className="text-sm text-[#7F1D1D]">
+              {baaPending > 0 && `${baaPending} pending BAA${baaPending !== 1 ? 's' : ''}. `}
+              {baaExpiring > 0 && `${baaExpiring} BAA${baaExpiring !== 1 ? 's' : ''} expiring soon. `}
+              {suspendedOrAtRisk > 0 && `${suspendedOrAtRisk} suspended/at-risk ${suspendedOrAtRisk !== 1 ? 'agencies' : 'agency'}. `}
+              {totalUnverifiedUsers > 5 && `${totalUnverifiedUsers} unverified users across system.`}
+            </p>
+          </div>
+          <Button variant="outline" size="sm" className="border-[#DC2626] text-[#DC2626] hover:bg-[#FEE2E2] hidden sm:flex">
+            View Details
+          </Button>
+        </div>
+      )}
+
+      {/* Timeframe Toggle */}
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm text-[#64748b]">Key Metrics</h3>
+        <div className="flex items-center gap-1 p-1 bg-white border border-[#e2e8f0] rounded-lg">
+          {(['7d', '30d', 'YTD'] as TimeframeType[]).map((tf) => (
+            <button
+              key={tf}
+              onClick={() => setTimeframe(tf)}
+              className={`px-3 py-1 text-xs rounded transition-colors ${
+                timeframe === tf
+                  ? 'bg-[#0966CC] text-white shadow-sm'
+                  : 'text-[#64748b] hover:text-[#0f172a] hover:bg-[#f8fafc]'
+              }`}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Enhanced Stats Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mb-8">
+        <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-[#E0F2FE] flex items-center justify-center">
+              <Building2 className="w-5 h-5 text-[#0966CC]" />
+            </div>
+          </div>
+          <p className="text-2xl text-[#0f172a] mb-1">{totalAgencies}</p>
+          <p className="text-xs text-[#64748b]">Total Agencies</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-[#D1FAE5] flex items-center justify-center">
+              <CheckCircle2 className="w-5 h-5 text-[#10B981]" />
+            </div>
+          </div>
+          <p className="text-2xl text-[#0f172a] mb-1">{activeAgencies}</p>
+          <p className="text-xs text-[#64748b]">Active</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-[#FEF3C7] flex items-center justify-center">
+              <FileText className="w-5 h-5 text-[#F59E0B]" />
+            </div>
+          </div>
+          <p className="text-2xl text-[#0f172a] mb-1">{baaPending + baaExpiring}</p>
+          <p className="text-xs text-[#64748b]">Pending BAA</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-[#FEE2E2] flex items-center justify-center">
+              <AlertTriangle className="w-5 h-5 text-[#DC2626]" />
+            </div>
+          </div>
+          <p className="text-2xl text-[#0f172a] mb-1">{suspendedOrAtRisk}</p>
+          <p className="text-xs text-[#64748b]">Suspended / At-Risk</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-[#DBEAFE] flex items-center justify-center">
+              <Users className="w-5 h-5 text-[#1E40AF]" />
+            </div>
+          </div>
+          <p className="text-2xl text-[#0f172a] mb-1">{totalClinicians}</p>
+          <p className="text-xs text-[#64748b]">Total Clinicians</p>
+        </div>
+      </div>
+
+      {/* Docs Metric with Timeframe */}
+      <div className="grid grid-cols-1 gap-3 sm:gap-4 mb-8">
+        <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-[#F3E8FF] flex items-center justify-center">
+              <FileText className="w-5 h-5 text-[#7C3AED]" />
+            </div>
+          </div>
+          <p className="text-2xl text-[#0f172a] mb-1">{getDocsToday()}</p>
+          <p className="text-xs text-[#64748b]">Total Docs ({timeframe})</p>
+        </div>
+      </div>
+
+      {/* Inline Filter Tags */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <span className="text-sm text-[#64748b]">Quick filters:</span>
+        {getStatusBadge('Active', true)}
+        {getEnvironmentBadge('Test', true)}
+        {getEnvironmentBadge('Production', true)}
+        {getStatusBadge('At-Risk', true)}
+        {getEnvironmentBadge('Onboarding', true)}
+      </div>
+
+      {/* Active Filters Display */}
+      {activeFilters.length > 0 && (
+        <div className="flex items-center gap-2 mb-4 p-3 bg-[#f8fafc] rounded-lg border border-[#e2e8f0]">
+          <span className="text-sm text-[#64748b]">Active filters:</span>
+          {activeFilters.map((filter) => (
+            <Badge key={filter} className="bg-[#0966CC] text-white border-[#0966CC] gap-1">
+              {filter}
+              <button onClick={() => removeFilter(filter)} className="hover:opacity-70">
+                <X className="w-3 h-3" />
+              </button>
+            </Badge>
+          ))}
+          <button
+            onClick={() => setActiveFilters([])}
+            className="text-xs text-[#64748b] hover:text-[#0f172a] ml-auto"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
+
+      {/* All Agencies */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0]">
+        <div className="border-b border-[#e2e8f0] px-4 sm:px-6 py-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <h2 className="text-lg sm:text-xl text-[#0f172a]">All Agencies</h2>
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+              {/* Search with Cmd+K hint */}
+              <div className="relative flex-1 sm:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748b]" />
+                <Input
+                  type="text"
+                  placeholder="Search or press Cmd+K..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setIsCommandPaletteOpen(true)}
+                  className="pl-10 border-[#e2e8f0] h-9"
+                />
+              </div>
+
+              {/* Filters */}
+              <div className="flex gap-2">
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-[130px] h-9 border-[#e2e8f0]">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Status</SelectItem>
+                    <SelectItem value="Active">Active</SelectItem>
+                    <SelectItem value="Inactive">Inactive</SelectItem>
+                    <SelectItem value="Suspended">Suspended</SelectItem>
+                    <SelectItem value="At-Risk">At-Risk</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Select value={environmentFilter} onValueChange={setEnvironmentFilter}>
+                  <SelectTrigger className="w-[140px] h-9 border-[#e2e8f0]">
+                    <SelectValue placeholder="Environment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Env</SelectItem>
+                    <SelectItem value="Production">Production</SelectItem>
+                    <SelectItem value="Test">Test</SelectItem>
+                    <SelectItem value="Trial">Trial</SelectItem>
+                    <SelectItem value="Onboarding">Onboarding</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Button
+                  onClick={handleExportCSV}
+                  variant="outline"
+                  size="sm"
+                  className="h-9 border-[#e2e8f0]"
+                >
+                  <Download className="w-4 h-4 mr-1" />
+                  <span className="hidden sm:inline">Export</span>
+                </Button>
+
+                <Button
+                  onClick={() => setIsAddAgencyModalOpen(true)}
+                  className="bg-[#0966CC] hover:bg-[#0C4A6E] text-white h-9"
+                  size="sm"
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  <span className="hidden sm:inline">Add Agency</span>
+                  <span className="sm:hidden">Add</span>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="divide-y divide-[#e2e8f0]">
+          {filteredAgencies.length === 0 ? (
+            <div className="p-12 text-center">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#f8fafc] flex items-center justify-center">
+                <Building2 className="w-8 h-8 text-[#94a3b8]" />
+              </div>
+              <h3 className="text-lg text-[#0f172a] mb-2">No agencies found</h3>
+              <p className="text-sm text-[#64748b] mb-4">
+                {searchQuery ? 'Try adjusting your search or filters' : 'Get started by adding your first agency'}
+              </p>
+              {!searchQuery && (
+                <Button
+                  onClick={() => setIsAddAgencyModalOpen(true)}
+                  className="bg-[#0966CC] hover:bg-[#0C4A6E] text-white"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Agency
+                </Button>
+              )}
+            </div>
+          ) : (
+            filteredAgencies.map((agency) => (
+              <div key={agency.id} className="p-4 sm:p-6 hover:bg-[#f8fafc] transition-colors">
+                <div className="flex flex-col gap-4">
+                  {/* Header Row */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3 flex-1">
+                      {/* Agency Logo Placeholder */}
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#0966CC] to-[#0C4A6E] flex items-center justify-center text-white flex-shrink-0">
+                        {agency.name.substring(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          <h3 className="text-base sm:text-lg text-[#0f172a]">{agency.name}</h3>
+                          {getStatusBadge(agency.status)}
+                          {getEnvironmentBadge(agency.environment)}
+                          {getSecurityPosture(agency)}
+                        </div>
+                        <div className="flex items-center gap-4 text-sm text-[#64748b] flex-wrap">
+                          <span>{agency.subdomain}</span>
+                          <span>•</span>
+                          <span>{agency.contact}</span>
+                          {agency.region && (
+                            <>
+                              <span>•</span>
+                              <span>{agency.region}</span>
+                            </>
+                          )}
+                        </div>
+                        {/* Onboarding Progress for non-complete agencies */}
+                        {agency.onboardingComplete < 100 && (
+                          <div className="mt-2">
+                            <div className="flex items-center justify-between text-xs text-[#64748b] mb-1">
+                              <span>Onboarding Progress</span>
+                              <span>{agency.onboardingComplete}%</span>
+                            </div>
+                            <div className="w-full h-2 bg-[#f1f5f9] rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-[#0966CC] transition-all"
+                                style={{ width: `${agency.onboardingComplete}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {getHealthStatus(agency.systemHealth)}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-8 w-8 p-0">
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56">
+                          <DropdownMenuLabel>Quick Actions</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => navigation.navigate('EditAgency', { agencyId: agency.id, agencyData: agency })}>
+                            <Settings className="w-4 h-4 mr-2" />
+                            Agency Settings
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>
+                            <Users className="w-4 h-4 mr-2" />
+                            Manage Users
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => navigation.navigate('AgencyAnalytics', { agencyId: agency.id, agencyName: agency.name })}>
+                            <Activity className="w-4 h-4 mr-2" />
+                            View Analytics
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setIsAuditLogOpen(true)}>
+                            <FileText className="w-4 h-4 mr-2" />
+                            View Audit Log
+                          </DropdownMenuItem>
+                          {agency.baaStatus !== 'BAA Not Signed' && (
+                            <DropdownMenuItem onClick={() => setSelectedBaaAgency(agency)}>
+                              <Download className="w-4 h-4 mr-2" />
+                              View BAA Document
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem 
+                            onClick={() => {
+                              setFeatureFlagsAgency(agency);
+                              setIsFeatureFlagsOpen(true);
+                            }}
+                          >
+                            <Flag className="w-4 h-4 mr-2" />
+                            Feature Flags
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setImpersonateAgency(agency);
+                              setIsImpersonateOpen(true);
+                            }}
+                            className="text-[#F59E0B]"
+                          >
+                            <Eye className="w-4 h-4 mr-2" />
+                            Impersonate
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSuspendAgency(agency);
+                              setIsSuspendDialogOpen(true);
+                            }}
+                            className="text-[#DC2626]"
+                          >
+                            {agency.status === 'Suspended' ? (
+                              <>
+                                <PlayCircle className="w-4 h-4 mr-2" />
+                                Unsuspend Agency
+                              </>
+                            ) : (
+                              <>
+                                <Ban className="w-4 h-4 mr-2" />
+                                Suspend Agency
+                              </>
+                            )}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+
+                  {/* Info Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3 text-sm">
+                    {/* BAA Status with Tooltip */}
+                    <div>
+                      <div className="flex items-center gap-1 text-[#64748b] mb-1">
+                        <span>BAA Status</span>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <Info className="w-3 h-3" />
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Business Associate Agreement. Click to view details.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      {agency.baaStatus !== 'BAA Not Signed' ? (
+                        <button
+                          onClick={() => setSelectedBaaAgency(agency)}
+                          className={`flex items-center gap-1 hover:underline ${
+                            agency.baaStatus === 'BAA Expiring Soon' ? 'text-[#F59E0B]' : 'text-[#10B981]'
+                          }`}
+                        >
+                          <FileText className="w-3 h-3" />
+                          {agency.baaStatus === 'BAA Expiring Soon' ? 'Expiring' : 'Signed'}
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      ) : (
+                        <span className="text-[#DC2626]">Not Signed</span>
+                      )}
+                    </div>
+
+                    {/* Billing Plan with Usage */}
+                    <div>
+                      <div className="text-[#64748b] mb-1">Plan & Usage</div>
+                      <div className="text-[#0f172a]">
+                        {agency.billingPlan}
+                        <span className={`text-xs ml-1 ${
+                          agency.seatsUsed >= agency.seats ? 'text-[#DC2626]' : 'text-[#64748b]'
+                        }`}>
+                          ({agency.seatsUsed}/{agency.seats})
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Renewal */}
+                    {agency.renewal && (
+                      <div>
+                        <div className="text-[#64748b] mb-1">Renewal</div>
+                        <div className="text-[#0f172a]">{agency.renewal}</div>
+                      </div>
+                    )}
+
+                    {/* Last Active */}
+                    {agency.lastActive && (
+                      <div>
+                        <div className="text-[#64748b] mb-1">Last Active</div>
+                        <div className="flex items-center gap-1 text-[#0f172a]">
+                          <Clock className="w-3 h-3" />
+                          {agency.lastActive}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Last Import with Health */}
+                    {agency.lastImport && (
+                      <div>
+                        <div className="text-[#64748b] mb-1">Last Import</div>
+                        <div className={`flex items-center gap-1 ${
+                          agency.lastImportSuccess === false ? 'text-[#DC2626]' : 'text-[#0f172a]'
+                        }`}>
+                          <Activity className="w-3 h-3" />
+                          {agency.lastImport}
+                          {agency.lastImportSuccess === false && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <AlertTriangle className="w-3 h-3 text-[#DC2626]" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Ingestion failing in last hour</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Clinician Count */}
+                    <div>
+                      <div className="text-[#64748b] mb-1">Clinicians</div>
+                      <div className="flex items-center gap-1 text-[#0f172a]">
+                        <Users className="w-3 h-3" />
+                        {agency.clinicianCount}
+                      </div>
+                    </div>
+
+                    {/* Unverified Users with Tooltip */}
+                    {agency.unverifiedUsers > 0 && (
+                      <div>
+                        <div className="flex items-center gap-1 text-[#64748b] mb-1">
+                          <span>Unverified Users</span>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <Info className="w-3 h-3" />
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Users who haven't completed email/MFA verification</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                        <div className="flex items-center gap-1 text-[#F59E0B]">
+                          <AlertTriangle className="w-3 h-3" />
+                          {agency.unverifiedUsers}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* MFA Percentage */}
+                    <div>
+                      <div className="text-[#64748b] mb-1">MFA Coverage</div>
+                      <div className={`${
+                        agency.mfaPercentage >= 90 ? 'text-[#10B981]' : 
+                        agency.mfaPercentage >= 70 ? 'text-[#F59E0B]' : 
+                        'text-[#DC2626]'
+                      }`}>
+                        {agency.mfaPercentage}%
+                      </div>
+                    </div>
+
+                    {/* Created */}
+                    <div>
+                      <div className="text-[#64748b] mb-1">Created</div>
+                      <div className="text-[#0f172a]">{agency.created}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Enhanced Profile Tab (Account Hub)
+  const renderProfileTab = () => (
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+      {/* Welcome Section */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-6 mb-6">
+        <div className="flex items-center gap-4 mb-4">
+          <Avatar className="w-16 h-16 bg-[#0966CC]">
+            <AvatarFallback className="bg-[#0966CC] text-white text-xl">SA</AvatarFallback>
+          </Avatar>
+          <div>
+            <p className="text-sm text-[#64748b] mb-1">Welcome back,</p>
+            <h2 className="text-2xl text-[#0f172a]">System Administrator</h2>
+          </div>
+        </div>
+      </div>
+
+      {/* Profile Info Card */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-6 mb-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Avatar className="w-12 h-12 bg-[#0966CC]">
+            <AvatarFallback className="bg-[#0966CC] text-white">SA</AvatarFallback>
+          </Avatar>
+          <div>
+            <h3 className="text-lg text-[#0f172a]">Account Information</h3>
+            <p className="text-sm text-[#64748b]">View and manage your account details</p>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div>
+              <Label className="text-sm text-[#64748b] mb-2 block">Name</Label>
+              <p className="text-[#0f172a]">System Administrator</p>
+            </div>
+            <div>
+              <Label className="text-sm text-[#64748b] mb-2 block">Role</Label>
+              <Badge className="bg-[#0966CC] text-white border-[#0966CC]">
+                Super Admin
+              </Badge>
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-sm text-[#64748b] mb-2 block">Email</Label>
+            <p className="text-[#0f172a]">admin@luminous.com</p>
+          </div>
+
+          <div>
+            <Label className="text-sm text-[#64748b] mb-2 block">Access Level</Label>
+            <p className="text-[#0f172a]">Full System Access</p>
+          </div>
+
+          <div>
+            <Label className="text-sm text-[#64748b] mb-2 block">Agencies Managed</Label>
+            <p className="text-[#0f172a]">{totalAgencies} agencies</p>
+          </div>
+        </div>
+      </div>
+
+      {/* MFA Status */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#D1FAE5] flex items-center justify-center">
+              <Shield className="w-6 h-6 text-[#10B981]" />
+            </div>
+            <div>
+              <h3 className="text-lg text-[#0f172a]">Multi-Factor Authentication</h3>
+              <p className="text-sm text-[#64748b]">Your account is protected</p>
+            </div>
+          </div>
+          <Badge className="bg-[#D1FAE5] text-[#047857] border-[#A7F3D0]">
+            <CheckCircle2 className="w-3 h-3 mr-1" />
+            Enabled
+          </Badge>
+        </div>
+        <div className="space-y-3 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-[#64748b]">Primary Method</span>
+            <span className="text-[#0f172a]">Authenticator App</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[#64748b]">Backup Codes</span>
+            <Button variant="outline" size="sm" className="h-8">
+              <Download className="w-3 h-3 mr-1" />
+              Download
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Last Login */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-6 mb-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-12 h-12 rounded-xl bg-[#FEF3C7] flex items-center justify-center">
+            <Clock className="w-6 h-6 text-[#F59E0B]" />
+          </div>
+          <div>
+            <h3 className="text-lg text-[#0f172a]">Last Login</h3>
+            <p className="text-sm text-[#64748b]">Track your recent access</p>
+          </div>
+        </div>
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center gap-2 text-[#64748b]">
+            <Monitor className="w-4 h-4" />
+            <span>Chrome on MacOS</span>
+          </div>
+          <div className="flex items-center gap-2 text-[#64748b]">
+            <span>📍 San Francisco, CA</span>
+          </div>
+          <div className="flex items-center gap-2 text-[#64748b]">
+            <span>🕒 Today at 9:42 AM</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Active Sessions */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#DBEAFE] flex items-center justify-center">
+              <Monitor className="w-6 h-6 text-[#0966CC]" />
+            </div>
+            <div>
+              <h3 className="text-lg text-[#0f172a]">Active Sessions</h3>
+              <p className="text-sm text-[#64748b]">Manage your active sessions</p>
+            </div>
+          </div>
+        </div>
+        <div className="space-y-3">
+          {activeSessions.map((session) => (
+            <div key={session.id} className="flex items-center justify-between p-3 border border-[#e2e8f0] rounded-lg">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[#f8fafc] flex items-center justify-center">
+                  {session.device.includes('iPhone') ? (
+                    <Smartphone className="w-5 h-5 text-[#64748b]" />
+                  ) : (
+                    <Monitor className="w-5 h-5 text-[#64748b]" />
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm text-[#0f172a] mb-1">
+                    {session.device}
+                    {session.current && (
+                      <Badge className="ml-2 bg-[#D1FAE5] text-[#047857] border-[#A7F3D0] text-xs">
+                        Current
+                      </Badge>
+                    )}
+                  </p>
+                  <p className="text-xs text-[#64748b]">{session.location}</p>
+                  <p className="text-xs text-[#64748b]">{session.lastActive}</p>
+                </div>
+              </div>
+              {!session.current && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-[#DC2626] border-[#DC2626] hover:bg-[#FEE2E2]"
+                  onClick={() => handleRevokeSession(session.id)}
+                >
+                  Revoke
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* API Token Management */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#FEE2E2] flex items-center justify-center">
+              <Key className="w-6 h-6 text-[#DC2626]" />
+            </div>
+            <div>
+              <h3 className="text-lg text-[#0f172a]">API Tokens</h3>
+              <p className="text-sm text-[#64748b]">Manage your API access tokens</p>
+            </div>
+          </div>
+          <Button size="sm" className="bg-[#0966CC] hover:bg-[#0C4A6E] text-white">
+            <Plus className="w-4 h-4 mr-1" />
+            Generate Token
+          </Button>
+        </div>
+        <div className="text-sm text-[#64748b] text-center py-8 border border-dashed border-[#e2e8f0] rounded-lg">
+          <Key className="w-8 h-8 text-[#94a3b8] mx-auto mb-2" />
+          <p>No API tokens generated yet</p>
+          <p className="text-xs mt-1">Create a token to access the Luminous API</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Enhanced Settings Tab (Preferences)
+  const renderSettingsTab = () => (
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+      {/* Appearance */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-6 mb-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-12 h-12 rounded-xl bg-[#DBEAFE] flex items-center justify-center">
+            {darkMode ? <Moon className="w-6 h-6 text-[#0966CC]" /> : <Sun className="w-6 h-6 text-[#0966CC]" />}
+          </div>
+          <div>
+            <h3 className="text-lg text-[#0f172a]">Appearance</h3>
+            <p className="text-sm text-[#64748b]">Customize how Luminous looks to you</p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <Label className="text-sm text-[#0f172a] mb-1 block">Dark Mode</Label>
+            <p className="text-xs text-[#64748b]">Switch between light and dark themes</p>
+          </div>
+          <Switch checked={darkMode} onCheckedChange={setDarkMode} />
+        </div>
+      </div>
+
+      {/* Default Preferences */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-6 mb-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-12 h-12 rounded-xl bg-[#D1FAE5] flex items-center justify-center">
+            <Settings className="w-6 h-6 text-[#10B981]" />
+          </div>
+          <div>
+            <h3 className="text-lg text-[#0f172a]">Default Preferences</h3>
+            <p className="text-sm text-[#64748b]">Set your default view options</p>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div>
+            <Label className="text-sm text-[#0f172a] mb-2 block">Default Agency List Sort</Label>
+            <Select value={defaultSort} onValueChange={setDefaultSort}>
+              <SelectTrigger className="border-[#e2e8f0]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="created">Most Recent</SelectItem>
+                <SelectItem value="name">Alphabetical</SelectItem>
+                <SelectItem value="activity">Last Active</SelectItem>
+                <SelectItem value="status">Status</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label className="text-sm text-[#0f172a] mb-2 block">Default Analytics Window</Label>
+            <Select value={defaultAnalyticsWindow} onValueChange={setDefaultAnalyticsWindow}>
+              <SelectTrigger className="border-[#e2e8f0]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7d">Last 7 Days</SelectItem>
+                <SelectItem value="30d">Last 30 Days</SelectItem>
+                <SelectItem value="90d">Last 90 Days</SelectItem>
+                <SelectItem value="YTD">Year to Date</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label className="text-sm text-[#0f172a] mb-2 block">Email Digest Frequency</Label>
+            <Select value={emailDigestFrequency} onValueChange={setEmailDigestFrequency}>
+              <SelectTrigger className="border-[#e2e8f0]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="realtime">Real-time</SelectItem>
+                <SelectItem value="daily">Daily</SelectItem>
+                <SelectItem value="weekly">Weekly</SelectItem>
+                <SelectItem value="never">Never</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      {/* Change Password Card */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-6 mb-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-12 h-12 rounded-xl bg-[#FEF3C7] flex items-center justify-center">
+            <Lock className="w-6 h-6 text-[#F59E0B]" />
+          </div>
+          <div>
+            <h3 className="text-lg text-[#0f172a]">Change Password</h3>
+            <p className="text-sm text-[#64748b]">Update your password to keep your account secure</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="current-password" className="text-sm text-[#64748b] mb-2 block">
+              Current Password
+            </Label>
+            <Input
+              id="current-password"
+              type="password"
+              placeholder="Enter current password"
+              className="border-[#e2e8f0]"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="new-password" className="text-sm text-[#64748b] mb-2 block">
+              New Password
+            </Label>
+            <Input
+              id="new-password"
+              type="password"
+              placeholder="Enter new password"
+              className="border-[#e2e8f0]"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="confirm-password" className="text-sm text-[#64748b] mb-2 block">
+              Confirm New Password
+            </Label>
+            <Input
+              id="confirm-password"
+              type="password"
+              placeholder="Confirm new password"
+              className="border-[#e2e8f0]"
+            />
+          </div>
+
+          <Button className="w-full bg-[#0966CC] hover:bg-[#0C4A6E] text-white">
+            Update Password
+          </Button>
+        </div>
+      </div>
+
+
+    </div>
+  );
+
+  return (
+    <div className="flex h-screen bg-[#f8fafc]">
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex md:w-64 flex-col border-r border-[#e2e8f0] bg-white">
+        <div className="p-6 border-b border-[#e2e8f0]">
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 rounded-xl bg-[#0966CC] flex items-center justify-center">
+              <Zap className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-lg text-[#0f172a]">Luminous</h1>
+              <p className="text-xs text-[#64748b]">Super Admin</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">{renderSidebarNav()}</div>
+
+        <div className="p-4 border-t border-[#e2e8f0]">
+          <button
+            onClick={handleSignOut}
+            className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-[#DC2626] hover:bg-[#FEE2E2] transition-colors"
+          >
+            <LogOut className="w-5 h-5" />
+            <span>Sign Out</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Header */}
+        <header className="bg-white border-b border-[#e2e8f0] px-4 sm:px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setIsDrawerOpen(true)}
+                className="md:hidden p-2 hover:bg-[#f8fafc] rounded-lg transition-colors"
+              >
+                <Menu className="w-6 h-6 text-[#64748b]" />
+              </button>
+              <h1 className="text-xl sm:text-2xl text-[#0f172a]">
+                {activeTab === 'agencies' && 'Agency Management'}
+                {activeTab === 'profile' && 'Account Hub'}
+                {activeTab === 'settings' && 'Preferences'}
+              </h1>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="hidden sm:flex h-9 gap-2"
+                      onClick={() => setIsCommandPaletteOpen(true)}
+                    >
+                      <Search className="w-4 h-4" />
+                      <span className="text-xs text-[#64748b]">
+                        <kbd className="px-1.5 py-0.5 text-xs bg-[#f8fafc] border border-[#e2e8f0] rounded">⌘</kbd>
+                        <kbd className="px-1.5 py-0.5 text-xs bg-[#f8fafc] border border-[#e2e8f0] rounded ml-0.5">K</kbd>
+                      </span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Global search</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onClick={() => setIsAuditLogOpen(true)}
+              >
+                <History className="w-4 h-4 mr-1" />
+                <span className="hidden sm:inline">Audit Log</span>
+              </Button>
+
+              <Avatar className="w-9 h-9 bg-[#0966CC] md:hidden">
+                <AvatarFallback className="bg-[#0966CC] text-white text-sm">SA</AvatarFallback>
+              </Avatar>
+            </div>
+          </div>
+        </header>
+
+        {/* Tab Content */}
+        <main className="flex-1 overflow-y-auto">
+          {activeTab === 'agencies' && renderAgenciesTab()}
+          {activeTab === 'profile' && renderProfileTab()}
+          {activeTab === 'settings' && renderSettingsTab()}
+        </main>
+      </div>
+
+      {/* Mobile Drawer */}
+      <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
+        <SheetContent side="left" className="w-64 p-0">
+          <SheetHeader className="p-6 border-b border-[#e2e8f0]">
+            <div className="flex items-center gap-2">
+              <div className="w-10 h-10 rounded-xl bg-[#0966CC] flex items-center justify-center">
+                <Zap className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <SheetTitle className="text-lg text-[#0f172a]">Luminous</SheetTitle>
+                <p className="text-xs text-[#64748b]">Super Admin</p>
+              </div>
+            </div>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto p-4">{renderSidebarNav()}</div>
+
+          <div className="p-4 border-t border-[#e2e8f0]">
+            <button
+              onClick={handleSignOut}
+              className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-[#DC2626] hover:bg-[#FEE2E2] transition-colors"
+            >
+              <LogOut className="w-5 h-5" />
+              <span>Sign Out</span>
+            </button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Command Palette */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        agencies={agencies}
+        onSelectAgency={(agencyId) => {
+          const agency = agencies.find(a => a.id === agencyId);
+          if (agency) {
+            navigation.navigate('EditAgency', { agencyId, agencyData: agency });
+          }
+        }}
+      />
+
+      {/* Add Agency Modal */}
+      <Dialog open={isAddAgencyModalOpen} onOpenChange={setIsAddAgencyModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add New Agency</DialogTitle>
+            <DialogDescription>
+              Create a new healthcare agency in the system
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="agency-name" className="text-sm text-[#64748b] mb-2 block">
+                Agency Name *
+              </Label>
+              <Input
+                id="agency-name"
+                placeholder="e.g., Sunrise Healthcare"
+                value={formData.agencyName}
+                onChange={(e) => handleFormChange('agencyName', e.target.value)}
+                className="border-[#e2e8f0]"
+              />
+            </div>
+
+            <div>
+              <Label className="text-sm text-[#64748b] mb-2 block">Subdomain *</Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="subdomain"
+                  value={formData.subdomain}
+                  onChange={(e) => handleFormChange('subdomain', e.target.value)}
+                  className="border-[#e2e8f0]"
+                />
+                <Select
+                  value={formData.domainSuffix}
+                  onValueChange={(value) => handleFormChange('domainSuffix', value)}
+                >
+                  <SelectTrigger className="w-[120px] border-[#e2e8f0]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value=".app">.app</SelectItem>
+                    <SelectItem value=".health">.health</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="text-xs text-[#64748b] mt-1">
+                Full URL: {formData.subdomain || 'subdomain'}{formData.domainSuffix}
+              </p>
+            </div>
+
+            <div>
+              <Label htmlFor="ein" className="text-sm text-[#64748b] mb-2 block">
+                EIN (Tax ID)
+              </Label>
+              <Input
+                id="ein"
+                placeholder="12-3456789"
+                value={formData.ein}
+                onChange={(e) => handleFormChange('ein', e.target.value)}
+                className="border-[#e2e8f0]"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="contact-email" className="text-sm text-[#64748b] mb-2 block">
+                Primary Contact Email *
+              </Label>
+              <Input
+                id="contact-email"
+                type="email"
+                placeholder="admin@agency.com"
+                value={formData.contactEmail}
+                onChange={(e) => handleFormChange('contactEmail', e.target.value)}
+                className="border-[#e2e8f0]"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="contact-phone" className="text-sm text-[#64748b] mb-2 block">
+                Contact Phone
+              </Label>
+              <Input
+                id="contact-phone"
+                type="tel"
+                placeholder="(555) 123-4567"
+                value={formData.contactPhone}
+                onChange={(e) => handleFormChange('contactPhone', e.target.value)}
+                className="border-[#e2e8f0]"
+              />
+            </div>
+
+            <Separator />
+
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-sm text-[#0f172a] mb-1 block">BAA Signed</Label>
+                <p className="text-xs text-[#64748b]">Has the Business Associate Agreement been signed?</p>
+              </div>
+              <Checkbox
+                checked={formData.baaSigned}
+                onCheckedChange={(checked) => handleFormChange('baaSigned', checked as boolean)}
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-sm text-[#0f172a] mb-1 block">Test Mode</Label>
+                <p className="text-xs text-[#64748b]">Create as a test/QA environment</p>
+              </div>
+              <Checkbox
+                checked={formData.testMode}
+                onCheckedChange={(checked) => handleFormChange('testMode', checked as boolean)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsAddAgencyModalOpen(false)}
+              className="border-[#e2e8f0]"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddAgency}
+              className="bg-[#0966CC] hover:bg-[#0C4A6E] text-white"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Create Agency
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* BAA Detail Modal */}
+      <Dialog open={!!selectedBaaAgency} onOpenChange={() => setSelectedBaaAgency(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Business Associate Agreement</DialogTitle>
+            <DialogDescription>
+              BAA details for {selectedBaaAgency?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBaaAgency && (
+            <div className="space-y-4 py-4">
+              <div className="flex items-center justify-between p-4 bg-[#f8fafc] rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                    selectedBaaAgency.baaStatus === 'BAA Expiring Soon' ? 'bg-[#FEF3C7]' : 'bg-[#D1FAE5]'
+                  }`}>
+                    <FileText className={`w-6 h-6 ${
+                      selectedBaaAgency.baaStatus === 'BAA Expiring Soon' ? 'text-[#F59E0B]' : 'text-[#10B981]'
+                    }`} />
+                  </div>
+                  <div>
+                    <p className="text-sm text-[#0f172a] mb-1">{selectedBaaAgency.baaStatus}</p>
+                    <p className="text-xs text-[#64748b]">
+                      {selectedBaaAgency.baaStatus === 'BAA Expiring Soon' ? 'Renewal required soon' : 'Fully executed and compliant'}
+                    </p>
+                  </div>
+                </div>
+                <Badge className={
+                  selectedBaaAgency.baaStatus === 'BAA Expiring Soon' 
+                    ? 'bg-[#FEF3C7] text-[#B45309] border-[#FDE68A]'
+                    : 'bg-[#D1FAE5] text-[#047857] border-[#A7F3D0]'
+                }>
+                  {selectedBaaAgency.baaStatus === 'BAA Expiring Soon' ? 'Expiring' : 'Active'}
+                </Badge>
+              </div>
+
+              <div className="space-y-3 text-sm">
+                <div className="flex items-center justify-between p-3 border border-[#e2e8f0] rounded-lg">
+                  <span className="text-[#64748b]">Signed Date</span>
+                  <span className="text-[#0f172a]">{selectedBaaAgency.baaSignedDate}</span>
+                </div>
+
+                <div className="flex items-center justify-between p-3 border border-[#e2e8f0] rounded-lg">
+                  <span className="text-[#64748b]">Signatory</span>
+                  <span className="text-[#0f172a]">{selectedBaaAgency.baaSignedBy}</span>
+                </div>
+
+                {selectedBaaAgency.baaRenewedDate && (
+                  <div className="flex items-center justify-between p-3 border border-[#e2e8f0] rounded-lg">
+                    <span className="text-[#64748b]">Last Renewed</span>
+                    <span className="text-[#0f172a]">{selectedBaaAgency.baaRenewedDate}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between p-3 border border-[#e2e8f0] rounded-lg">
+                  <span className="text-[#64748b]">Document</span>
+                  <Button variant="outline" size="sm">
+                    <Download className="w-3 h-3 mr-1" />
+                    Download PDF
+                  </Button>
+                </div>
+              </div>
+
+              <div className="bg-[#f8fafc] p-4 rounded-lg">
+                <h4 className="text-sm text-[#0f172a] mb-2 flex items-center gap-2">
+                  <History className="w-4 h-4" />
+                  History
+                </h4>
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center gap-2 text-[#64748b]">
+                    <CheckCircle2 className="w-3 h-3 text-[#10B981]" />
+                    <span>Signed on {selectedBaaAgency.baaSignedDate}</span>
+                  </div>
+                  {selectedBaaAgency.baaRenewedDate && (
+                    <div className="flex items-center gap-2 text-[#64748b]">
+                      <CheckCircle2 className="w-3 h-3 text-[#10B981]" />
+                      <span>Renewed on {selectedBaaAgency.baaRenewedDate}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectedBaaAgency(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Audit Log Modal */}
+      <Dialog open={isAuditLogOpen} onOpenChange={setIsAuditLogOpen}>
+        <DialogContent className="max-w-6xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Audit Log</DialogTitle>
+            <DialogDescription>
+              View recent system activities and changes
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex gap-2 mb-4">
+            <Input
+              placeholder="Search audit logs..."
+              className="flex-1 border-[#e2e8f0]"
+            />
+            <Button variant="outline" size="sm">
+              <Download className="w-4 h-4 mr-1" />
+              Export CSV
+            </Button>
+          </div>
+
+          <div className="border border-[#e2e8f0] rounded-lg overflow-hidden flex-1 min-h-0">
+            <div className="overflow-auto h-full">
+              <table className="w-full">
+                <thead className="bg-[#f8fafc] border-b border-[#e2e8f0] sticky top-0">
+                  <tr>
+                    <th className="text-left text-xs text-[#64748b] p-3 whitespace-nowrap">Timestamp</th>
+                    <th className="text-left text-xs text-[#64748b] p-3 whitespace-nowrap">Actor</th>
+                    <th className="text-left text-xs text-[#64748b] p-3 whitespace-nowrap">Action</th>
+                    <th className="text-left text-xs text-[#64748b] p-3 whitespace-nowrap">Entity</th>
+                    <th className="text-left text-xs text-[#64748b] p-3 whitespace-nowrap">Details</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#e2e8f0]">
+                  {auditLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-[#f8fafc]">
+                      <td className="text-xs text-[#64748b] p-3 whitespace-nowrap">{log.timestamp}</td>
+                      <td className="text-xs text-[#0f172a] p-3 whitespace-nowrap">{log.actor}</td>
+                      <td className="text-xs p-3 whitespace-nowrap">
+                        <Badge className="bg-[#DBEAFE] text-[#1E40AF] border-[#93C5FD] text-xs">
+                          {log.action}
+                        </Badge>
+                      </td>
+                      <td className="text-xs text-[#0f172a] p-3 whitespace-nowrap">{log.entity}</td>
+                      <td className="text-xs text-[#64748b] p-3">{log.details}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <p className="text-xs text-[#64748b] text-center mt-4">
+            Showing recent 20 entries • Total: 1,247 entries
+          </p>
+        </DialogContent>
+      </Dialog>
+
+      {/* Impersonation Dialog */}
+      <Dialog open={isImpersonateOpen} onOpenChange={setIsImpersonateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-[#F59E0B]">
+              <AlertTriangle className="w-5 h-5" />
+              Impersonate Agency
+            </DialogTitle>
+            <DialogDescription>
+              You are about to impersonate {impersonateAgency?.name}. This action will be logged.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="bg-[#FEF3C7] border border-[#FDE68A] rounded-lg p-4">
+              <p className="text-sm text-[#92400E]">
+                <strong>Important:</strong> While impersonating, all actions will be tagged in the audit log.
+                Session will automatically end after 15 minutes.
+              </p>
+            </div>
+
+            <div>
+              <Label className="text-sm text-[#64748b] mb-2 block">
+                Reason for Impersonation *
+              </Label>
+              <Textarea
+                placeholder="e.g., Support request #1234, investigating reported issue..."
+                value={impersonateReason}
+                onChange={(e) => setImpersonateReason(e.target.value)}
+                className="border-[#e2e8f0] min-h-[100px]"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsImpersonateOpen(false);
+                setImpersonateReason('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImpersonate}
+              className="bg-[#F59E0B] hover:bg-[#D97706] text-white"
+            >
+              <Eye className="w-4 h-4 mr-2" />
+              Start Impersonation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Suspend/Unsuspend Dialog */}
+      <Dialog open={isSuspendDialogOpen} onOpenChange={setIsSuspendDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-[#DC2626]">
+              <AlertTriangle className="w-5 h-5" />
+              {suspendAgency?.status === 'Suspended' ? 'Unsuspend' : 'Suspend'} Agency
+            </DialogTitle>
+            <DialogDescription>
+              {suspendAgency?.status === 'Suspended' 
+                ? `Restore access for ${suspendAgency?.name}`
+                : `Temporarily restrict access for ${suspendAgency?.name}`
+              }
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="bg-[#FEE2E2] border border-[#FECACA] rounded-lg p-4">
+              <p className="text-sm text-[#7F1D1D]">
+                {suspendAgency?.status === 'Suspended' 
+                  ? 'This will restore full access to the agency and all its users.'
+                  : 'This will immediately lock all agency users out and mark all data as read-only.'
+                }
+              </p>
+            </div>
+
+            <div>
+              <Label className="text-sm text-[#64748b] mb-2 block">
+                Reason *
+              </Label>
+              <Textarea
+                placeholder="e.g., Payment failure, security concern, user request..."
+                value={suspendReason}
+                onChange={(e) => setSuspendReason(e.target.value)}
+                className="border-[#e2e8f0] min-h-[100px]"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsSuspendDialogOpen(false);
+                setSuspendReason('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSuspend}
+              className={suspendAgency?.status === 'Suspended' 
+                ? 'bg-[#10B981] hover:bg-[#059669] text-white'
+                : 'bg-[#DC2626] hover:bg-[#B91C1C] text-white'
+              }
+            >
+              {suspendAgency?.status === 'Suspended' ? (
+                <>
+                  <PlayCircle className="w-4 h-4 mr-2" />
+                  Unsuspend Agency
+                </>
+              ) : (
+                <>
+                  <Ban className="w-4 h-4 mr-2" />
+                  Suspend Agency
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Feature Flags Dialog */}
+      <Dialog open={isFeatureFlagsOpen} onOpenChange={setIsFeatureFlagsOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Feature Flags</DialogTitle>
+            <DialogDescription>
+              Manage feature rollouts for {featureFlagsAgency?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="bg-[#f8fafc] p-4 rounded-lg">
+              <p className="text-xs text-[#64748b] mb-3">
+                Enable or disable specific features for staged rollouts and testing
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {['New OCR', 'Background sync v2', 'Biometric login'].map((flag) => (
+                <div key={flag} className="flex items-center justify-between p-4 border border-[#e2e8f0] rounded-lg">
+                  <div>
+                    <p className="text-sm text-[#0f172a] mb-1">{flag}</p>
+                    <p className="text-xs text-[#64748b]">
+                      {flag === 'New OCR' && 'Enhanced OCR with LLM integration'}
+                      {flag === 'Background sync v2' && 'Improved background sync performance'}
+                      {flag === 'Biometric login' && 'Face ID / Fingerprint authentication'}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={featureFlagsAgency?.featureFlags?.includes(flag)}
+                    onCheckedChange={(checked) => {
+                      toast.success(checked ? `${flag} enabled` : `${flag} disabled`);
+                    }}
+                  />
+                </div>
+              ))}
+
+              {/* Delivery Options with Sub-options */}
+              <div className="border border-[#e2e8f0] rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="text-sm text-[#0f172a] mb-1">Delivery options</p>
+                    <p className="text-xs text-[#64748b]">Configure available chart delivery methods</p>
+                  </div>
+                  <Switch
+                    checked={featureFlagsAgency?.featureFlags?.includes('Delivery options')}
+                    onCheckedChange={(checked) => {
+                      toast.success(checked ? 'Delivery options enabled' : 'Delivery options disabled');
+                    }}
+                  />
+                </div>
+                
+                {/* Sub-options for Delivery */}
+                <div className="ml-4 space-y-2 pt-3 border-t border-[#e2e8f0]">
+                  {['PDF', 'Print', 'Fax', 'Send via Email'].map((option) => (
+                    <div key={option} className="flex items-center justify-between">
+                      <Label className="text-sm text-[#64748b]">{option}</Label>
+                      <Checkbox
+                        defaultChecked={option === 'PDF' || option === 'Print'}
+                        onCheckedChange={(checked) => {
+                          toast.success(`${option} ${checked ? 'enabled' : 'disabled'}`);
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsFeatureFlagsOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
